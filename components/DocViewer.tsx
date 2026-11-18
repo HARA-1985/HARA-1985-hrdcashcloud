@@ -15,7 +15,7 @@ export default function DocViewer({ ctx, docId, onClose }: { ctx: Ctx; docId: st
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!doc?.temp_path) { setErr(doc?.mf_box_status === "stored" ? "原本はマネーフォワード クラウドBoxに保存されています" : "ファイルが見つかりません"); return; }
+      if (!doc?.temp_path) { setErr(doc?.mf_box_status === "stored" ? "原本はマネーフォワード クラウドBoxに保存されています。右の「クラウドBoxで原本を開く」から表示できます。" : "ファイルが見つかりません"); return; }
       const { data, error } = await sb().storage.from("inbox").createSignedUrl(doc.temp_path, 120);
       if (!alive) return;
       if (error || !data) setErr(error?.message ?? "表示できません"); else setUrl(data.signedUrl);
@@ -58,6 +58,7 @@ export default function DocViewer({ ctx, docId, onClose }: { ctx: Ctx; docId: st
             <span>{doc?.mf_box_status === "stored" ? "保存済" : doc?.mf_box_status === "failed" ? "保存に失敗" : "保存待ち（連携後に自動保存）"}</span>
           </div>
           {url && <a className="btn btn-primary" href={url} target="_blank" rel="noreferrer" style={{ marginTop: "auto" }}>新しいタブで開く</a>}
+          {!url && doc?.mf_box_file_id && <a className="btn btn-primary" href={`https://box.moneyforward.com/files/${doc.mf_box_file_id}`} target="_blank" rel="noopener noreferrer" style={{ marginTop: "auto" }}>クラウドBoxで原本を開く</a>}
         </aside>
       </div>
     </div>

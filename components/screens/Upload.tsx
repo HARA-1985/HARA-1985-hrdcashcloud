@@ -5,6 +5,7 @@ import { sb } from "@/lib/supabase";
 import { parseDate, toISO, yen } from "@/lib/format";
 import { ACCOUNT_TITLES, type Kind } from "@/lib/types";
 import Icon from "../Icon";
+import { parseBoxName, parseRows } from "@/lib/boxname";
 
 interface Draft {
   key: string; docId: string; file: string;
@@ -119,6 +120,7 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
       <BoxImport ctx={ctx} docType={isExp ? "receipt" : "invoice"} onImported={(list) => { addDrafts(list.map((x) => newDraft(x.docId, x.fileName, x.extracted))); ctx.reload(); }}
         onManual={(file, boxId) => handle([file], boxId)} />
     )}
+    {!isExp && ctx.canWrite && <BoxListImport ctx={ctx} />}
     <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", alignItems: "start" }}>
       <label
         className={"drop" + (over ? " is-over" : "")}
@@ -431,6 +433,91 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
           )}
           {progress && <span className="chip st-wait" style={{ alignSelf: "flex-start", height: "auto", padding: "6px 10px" }}>{progress}</span>}
           <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>取り込むと支払先・金額・支払期限を自動で読み取り、右の「内容の確認」に入ります。Boxは読み取りのみで、Box側のファイルは変更・削除しません。マネーフォワードの他サービスから保存されたファイルはAPIで取り出せないため、行の「Boxで開く」「ファイルを置く」で取り込みます。</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ---------- クラウドBoxのファイル一覧から支払予定を一括登録 ---------- */
+interface PreviewRow { boxId: string; folder: string; fileName: string; due: string | null; method: string | null; payee: string; amount: number | null; skip?: string; already?: boolean }
+
+function BoxListImport({ ctx }: { ctx: Ctx }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [from, setFrom] = useState(`${new Date().getFullYear()}-01-01`);
+  const [to, setTo] = useState(`${new Date().getFullYear()}-12-31`);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState("");
+  const year = Number(from.slice(0, 4)) || new Date().getFullYear();
+
+  const preview = useMemo<PreviewRow[]>(() => {
+    const seen = new Set<string>();
+    return parseRows(text).filter((r) => (seen.has(r.boxId) ? false : (seen.add(r.boxId), true))).map((r) => {
+      const p = parseBoxName(r, year);
+      const out = !p.skip && p.due && (p.due < from || p.due > to) ? { ...p, skip: "期間外" } : p;
+      return { ...out, already: ctx.docs.some((d) => d.mf_box_file_id === r.boxId) };
+    });
+  }, [text, from, to, year, ctx.docs]);
+  const ok = preview.filter((p) => !p.skip && !p.already);
+  const total = ok.reduce((a, p) => a + (p.amount ?? 0), 0);
+
+  async function register() {
+    setBusy(true); setResult("");
+    const { ok: good, j } = await authedPost("/api/import/box-payments", { companyId: ctx.company.id, rows: parseRows(text), from, to, year });
+    setBusy(false);
+    if (!good && !j.added) { ctx.toast(j.error ?? (j.errors ?? []).join(" / ") ?? "登録できませんでした", true); return; }
+    const msg = `${j.added}件を登録しました（登録済み ${j.already}件・対象外 ${j.skipped?.length ?? 0}件）`;
+    setResult(msg + (j.errors?.length ? `。エラー：${j.errors.join(" / ")}` : ""));
+    ctx.toast(msg, !!j.errors?.length);
+    setText(""); ctx.reload();
+  }
+
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <div className="row wrap" style={{ gap: 10, justifyContent: "space-between" }}>
+        <div className="row" style={{ gap: 10 }}>
+          <Icon name="folders" size={20} color="#2440D8" />
+          <h2 className="h2">Boxのファイル一覧から一括登録</h2>
+        </div>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? "閉じる" : "開く"}</button>
+      </div>
+      {open && (
+        <>
+          <p className="muted" style={{ fontSize: 13, margin: 0, lineHeight: 1.7 }}>ファイル名の【1126振替】【1130振込】と（金額）から、振替日・支払先・金額を読み取って支払予定を作ります。1行に「BoxファイルID|フォルダ名|ファイル名」の形で貼り付けてください。同じファイルは二重に登録されません。</p>
+          <label htmlFor="boxlist" className="sr">Boxのファイル一覧</label>
+          <textarea id="boxlist" className="inp" style={{ minHeight: 120, fontSize: 12, fontFamily: "ui-monospace, monospace" }} value={text} onChange={(e) => setText(e.target.value)} placeholder="01a1df9a-3986-…|引落|_【1126振替】ヤマト運輸請求書-01_20261031(14460)人形町.pdf" />
+          <div className="row wrap" style={{ gap: 10 }}>
+            <label className="row" style={{ gap: 6, fontSize: 13 }}>期間 <input id="boxfrom" type="date" className="inp" style={{ height: 36 }} value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+            <span>〜</span>
+            <input id="boxto" aria-label="期間の終わり" type="date" className="inp" style={{ height: 36 }} value={to} onChange={(e) => setTo(e.target.value)} />
+          </div>
+          {preview.length > 0 && (
+            <>
+              <div className="row wrap" style={{ gap: 12, fontSize: 13 }}>
+                <strong>登録する {ok.length}件・<span className="num">{yen(total)}</span></strong>
+                <span className="muted">登録済み {preview.filter((p) => p.already).length}件 ・ 対象外 {preview.filter((p) => p.skip).length}件</span>
+              </div>
+              <div className="scroll-x" style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #EFEDE8", borderRadius: 12 }}>
+                <table className="tbl">
+                  <thead><tr><th>支払日</th><th>方法</th><th>支払先</th><th className="r">金額</th><th>フォルダ</th><th>状態</th></tr></thead>
+                  <tbody>
+                    {preview.map((p) => (
+                      <tr key={p.boxId} style={p.skip || p.already ? { opacity: 0.5 } : undefined} title={p.fileName}>
+                        <td className="num nw">{p.due ?? "—"}</td><td className="nw">{p.method ?? "—"}</td>
+                        <td>{p.payee || <span className="muted">{p.fileName}</span>}</td>
+                        <td className="num r nw">{p.amount != null ? yen(p.amount) : "—"}</td>
+                        <td className="nw">{p.folder}</td>
+                        <td className="nw">{p.already ? "登録済み" : p.skip ? p.skip : "登録する"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" id="boxlist-register" className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy || ok.length === 0} onClick={register}>{busy ? "登録中…" : `${ok.length}件を支払予定に登録`}</button>
+            </>
+          )}
+          {result && <p style={{ fontSize: 13, margin: 0 }}>{result}</p>}
         </>
       )}
     </section>
