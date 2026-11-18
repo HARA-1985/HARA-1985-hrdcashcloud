@@ -324,7 +324,7 @@ function MfSection({ ctx }: { ctx: Ctx }) {
         <span className="muted">状態</span>
         <span><span className={"chip " + (connected ? "st-ok" : st === "error" ? "st-err" : "st-auto")}>{connected ? "連携中" : st === "error" ? "エラー" : "未連携"}</span>{ctx.mf?.office_name ? `　${ctx.mf.office_name}` : ""}</span>
         {ctx.mf?.last_error && <><span className="muted">エラー</span><span style={{ color: "#9B1C1C" }}>{ctx.mf.last_error}</span></>}
-        <span className="muted">連携する機能</span><span>クラウド会計（支払仕訳の登録・勘定科目の参照）／ クラウドBox（API仕様の受領後に追加）</span>
+        <span className="muted">連携する機能</span><span>クラウド会計（支払仕訳の登録・勘定科目の参照）／ クラウドBox（請求書・領収書の読み取りのみ）</span>
         <span className="muted">安全対策</span><span className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>この会社が契約しているマネーフォワードで本人が承認（OAuth）。認証情報はサーバー側で暗号化保存し、画面からは読めません。連携・解除・仕訳登録はすべて操作ログに残ります。</span>
       </div>
       {ctx.isOwner && (

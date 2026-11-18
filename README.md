@@ -27,7 +27,10 @@ HRD総合事務所が構築・管理し、顧問先もログインして使え�
 - リフレッシュトークンは1回限り有効のため、DBロックを取ってから更新し、新トークンを即保存
 - 仕訳登録は支払済みのみ・オーナー/承認者のみ。`mf_payment_claim` で二重登録を防止し、結果を支払予定と操作ログに記録
 - API呼び出しは会社ごとに間隔を空け（上限：毎秒3回）、429/503 は Retry-After に従って再試行
-- クラウドBox API はトライアル提供で公開仕様が無いため、仕様受領後に実装（/api/mf/sync）
+- クラウドBox（読み取りのみ・スコープ mfc/box/files.read）：請求書／立替経費の登録画面から期間・キーワードで検索して取り込み（/api/mf/box/files, /api/mf/box/import）
+  - 一覧 `GET https://api.box.moneyforward.com/v1/files?page=n`、本体 `/{id}/download`（S3署名URLへのリダイレクトはホストを検証し、MFの認証情報は転送しない）
+  - Box APIはトライアル提供で公式仕様が非公開。エンドポイントは公開OSS（kentaroajisaka/mf-api-mcp）の実装に基づく
+  - 取り込みはファイル形式を中身で判定（PDF/JPEG/PNG/WEBP/HEIC）、20MBまで、同じBoxファイルの二重取り込みを一意制約で防止
 
 ## 今後
 - マネーフォワード連携（OAuth・カード明細取得・クラウドBox保存・仕訳登録）

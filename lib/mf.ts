@@ -11,7 +11,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const MF_AUTH_BASE = "https://api.biz.moneyforward.com";
 export const MF_ACCOUNTING_BASE = process.env.MF_ACCOUNTING_BASE || "https://api-accounting.moneyforward.com/api/v3";
-const DEFAULT_SCOPES = "mfc/accounting/journal.read mfc/accounting/journal.write mfc/accounting/accounts.read";
+const DEFAULT_SCOPES = "mfc/accounting/journal.read mfc/accounting/journal.write mfc/accounting/accounts.read mfc/box/files.read";
+export const MF_BOX_BASE = "https://api.box.moneyforward.com/v1/files";
+export const BOX_READ_SCOPE = "mfc/box/files.read";
 
 export function mfConfig() {
   const clientId = process.env.MF_CLIENT_ID;
@@ -120,6 +122,13 @@ export async function getAccessToken(cfg: MfConfig, admin: SupabaseClient, compa
   throw new Error("トークンの更新が混み合っています。少し待ってから再度お試しください。");
 }
 
+/** 付与済みスコープ（連携時にMFが返した値） */
+export async function grantedScopes(admin: SupabaseClient, companyId: string): Promise<string[]> {
+  const { data } = await admin.rpc("mf_token_get", { cid: companyId });
+  const row = (data as { scope: string | null }[] | null)?.[0];
+  return (row?.scope ?? "").split(/\s+/).filter(Boolean);
+}
+
 export class MfNotConnected extends Error { constructor() { super("この会社はマネーフォワードと未連携です"); } }
 
 export async function revokeAndDelete(cfg: MfConfig, admin: SupabaseClient, companyId: string) {
@@ -175,4 +184,73 @@ export function pickArray(j: unknown, keys: string[]): Record<string, unknown>[]
     for (const v of Object.values(j as Record<string, unknown>)) if (Array.isArray(v)) return v as Record<string, unknown>[];
   }
   return [];
+}
+
+/* ---------- クラウドBox API（読み取りのみ） ---------- */
+export class BoxScopeMissing extends Error { constructor() { super("クラウドBoxの読み取り権限（mfc/box/files.read）がありません。アプリポータルでこの権限を追加し、設定画面から「連携し直す」を押してください。"); } }
+
+export async function boxRequest(cfg: MfConfig, admin: SupabaseClient, companyId: string, path: string): Promise<Response> {
+  const scopes = await grantedScopes(admin, companyId);
+  if (scopes.length && !scopes.includes(BOX_READ_SCOPE)) throw new BoxScopeMissing();
+  let token = await getAccessToken(cfg, admin, companyId);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await throttle(companyId);
+    const res = await fetch(MF_BOX_BASE + path, { redirect: "manual", cache: "no-store", signal: AbortSignal.timeout(45_000), headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+    if (res.status === 401 && attempt === 0) { await res.body?.cancel(); token = await getAccessToken(cfg, admin, companyId, true); continue; }
+    if (res.status === 403) {
+      const code = await boxErrorCode(res);
+      if (code.includes("INSUFFICIENT") || code.includes("SCOPE")) throw new BoxScopeMissing();
+      throw new MfApiError(403, code || "アクセスが許可されていません");
+    }
+    if (res.status === 429 || res.status === 503) {
+      const ra = Number(res.headers.get("retry-after")) || 2 ** attempt;
+      await res.body?.cancel();
+      await new Promise((r) => setTimeout(r, Math.min(ra, 10) * 1000));
+      continue;
+    }
+    return res;
+  }
+  throw new MfApiError(429, "クラウドBoxの呼び出し回数の上限に達しました。少し待ってから再度お試しください。");
+}
+
+export async function boxErrorCode(res: Response): Promise<string> {
+  try {
+    const j = (await res.json()) as { errors?: { code?: string }[] };
+    // 本文に署名URL等が含まれていても表示しない：エラーコードだけを取り出す
+    return (j.errors ?? []).map((e) => e.code).filter((c): c is string => typeof c === "string" && /^[A-Z_]{1,100}$/.test(c)).join(", ");
+  } catch { return ""; }
+}
+
+/** Boxファイル本体を取得（リダイレクト先はHTTPSのBox/S3のみ許可し、MFの認証情報は転送しない） */
+export async function boxDownload(cfg: MfConfig, admin: SupabaseClient, companyId: string, fileId: string, maxBytes: number): Promise<Uint8Array> {
+  let res = await boxRequest(cfg, admin, companyId, `/${encodeURIComponent(fileId)}/download`);
+  if ([301, 302, 303, 307, 308].includes(res.status)) {
+    const loc = res.headers.get("location");
+    await res.body?.cancel();
+    let target: URL;
+    try { target = new URL(loc ?? ""); } catch { throw new Error("Boxのダウンロード先が不正です"); }
+    const okHost = target.hostname === "api.box.moneyforward.com" || /^(?:[a-z0-9.-]+\.)?s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/.test(target.hostname);
+    if (target.protocol !== "https:" || target.username || target.password || target.port || !okHost) throw new Error("Boxのダウンロード先が想定外のため中止しました");
+    res = await fetch(target, { redirect: "error", cache: "no-store", signal: AbortSignal.timeout(45_000) });
+  }
+  if (!res.ok) {
+    const code = await boxErrorCode(res);
+    if (code.includes("INTERNAL_FILE_ACCESS_NOT_ALLOWED")) throw new Error("このファイルはマネーフォワード内部の連携で保存されたため、APIでは取得できません（Box画面から手動で取り込んでください）");
+    throw new MfApiError(res.status, code || "ファイルを取得できませんでした");
+  }
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("ファイル本体が空です");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel(); throw new Error(`ファイルが大きすぎます（${Math.round(maxBytes / 1024 / 1024)}MBまで）`); }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  return out;
 }

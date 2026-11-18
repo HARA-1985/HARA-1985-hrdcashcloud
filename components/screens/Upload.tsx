@@ -31,6 +31,13 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
   const inputRef = useRef<HTMLInputElement>(null);
   const isExp = mode === "expense";
 
+  const newDraft = (docId: string, file: string): Draft => ({
+    key: docId, docId, file,
+    payee: isExp ? (ctx.me?.display_name ?? "") : guessPayee(file), item: isExp ? "立替経費精算" : "",
+    amount: "", due: endOfMonth(), kind: "spot", account: isExp ? "未払金" : "買掛金", bank: ctx.banks[0]?.id ?? "",
+  });
+  const addDrafts = (ds: Draft[]) => setDrafts((cur) => [...ds.filter((d) => !cur.some((c) => c.key === d.key)), ...cur]);
+
   async function handle(files: File[]) {
     if (!ctx.canWrite) { ctx.toast("閲覧のみの権限では登録できません", true); return; }
     const ok = files.filter((f) => {
@@ -50,11 +57,7 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
       }).select("id").single();
       setUploading((n) => n - 1);
       if (error || !data) { ctx.toast(`${f.name}：登録に失敗しました（${error?.message}）`, true); return; }
-      setDrafts((ds) => [{
-        key: data.id, docId: data.id, file: f.name,
-        payee: isExp ? (ctx.me?.display_name ?? "") : guessPayee(f.name), item: isExp ? "立替経費精算" : "",
-        amount: "", due: endOfMonth(), kind: "spot", account: isExp ? "未払金" : "買掛金", bank: ctx.banks[0]?.id ?? "",
-      }, ...ds]);
+      addDrafts([newDraft(data.id, f.name)]);
     }));
     ctx.reload();
   }
@@ -79,6 +82,10 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
   const upd = (key: string, patch: Partial<Draft>) => setDrafts((ds) => ds.map((x) => (x.key === key ? { ...x, ...patch } : x)));
 
   return (
+    <div className="stack" style={{ gap: 16 }}>
+    {ctx.mf?.status === "connected" && ctx.canWrite && (
+      <BoxImport ctx={ctx} docType={isExp ? "receipt" : "invoice"} onImported={(list) => { addDrafts(list.map((x) => newDraft(x.docId, x.fileName))); ctx.reload(); }} />
+    )}
     <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", alignItems: "start" }}>
       <label
         className={"drop" + (over ? " is-over" : "")}
@@ -139,5 +146,109 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
         ))}
       </section>
     </div>
+    </div>
+  );
+}
+
+/* ---------- クラウドBoxから取り込む ---------- */
+interface BoxItem { id: string; name: string; size: number; date: string | null; dateKey: string | null; imported: boolean }
+
+function BoxImport({ ctx, docType, onImported }: { ctx: Ctx; docType: "invoice" | "receipt"; onImported: (list: { docId: string; fileName: string }[]) => void }) {
+  const t = new Date();
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState(toISO(new Date(t.getFullYear(), t.getMonth() - 1, 1)));
+  const [to, setTo] = useState(toISO(t));
+  const [q, setQ] = useState(docType === "invoice" ? "請求" : "");
+  const [items, setItems] = useState<BoxItem[] | null>(null);
+  const [note, setNote] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  async function call(path: string, payload: unknown) {
+    const { data } = await sb().auth.getSession();
+    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` }, body: JSON.stringify(payload) });
+    return { ok: res.ok, j: await res.json().catch(() => ({})) };
+  }
+  async function search(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (from && to && from > to) { ctx.toast("期間の開始日が終了日より後になっています", true); return; }
+    setBusy(true); setPicked(new Set()); setNote("");
+    const { ok, j } = await call("/api/mf/box/files", { companyId: ctx.company.id, from, to, q });
+    setBusy(false);
+    if (!ok) { ctx.toast(j.error ?? "クラウドBoxを検索できませんでした", true); return; }
+    setItems(j.items ?? []);
+    const notes: string[] = [];
+    if (j.noDateField) notes.push("Boxの一覧に日付情報が無いため、期間では絞り込めていません（キーワードで絞り込んでください）");
+    if (j.truncated) notes.push("件数が多いため一部のみ表示しています。期間やキーワードを絞ってください");
+    setNote(notes.join(" ／ "));
+  }
+  async function importPicked() {
+    const ids = [...picked].slice(0, 20);
+    if (!ids.length) return;
+    setBusy(true);
+    const { ok, j } = await call("/api/mf/box/import", { companyId: ctx.company.id, fileIds: ids, docType });
+    setBusy(false);
+    if (!ok) { ctx.toast(j.error ?? "取り込めませんでした", true); return; }
+    const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string }[];
+    const good = res.filter((r) => r.ok && r.docId).map((r) => ({ docId: r.docId!, fileName: r.fileName ?? "" }));
+    const bad = res.filter((r) => !r.ok);
+    if (good.length) onImported(good);
+    const goodIds = new Set(res.filter((r) => r.ok).map((r) => r.fileId));
+    setItems((cur) => cur?.map((it) => (goodIds.has(it.id) ? { ...it, imported: true } : it)) ?? null);
+    setPicked(new Set());
+    if (bad.length) ctx.toast(`${good.length}件取り込み、${bad.length}件できませんでした：${bad[0].message ?? ""}`, true);
+    else ctx.toast(`クラウドBoxから${good.length}件取り込みました。右の「内容の確認」で支払予定に登録してください`);
+  }
+  const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else if (n.size < 20) n.add(id); return n; });
+  const kb = (n: number) => (n >= 1048576 ? (n / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(n / 1024)) + "KB");
+
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <div className="row wrap" style={{ gap: 10, justifyContent: "space-between" }}>
+        <div className="row" style={{ gap: 10 }}>
+          <Icon name="folders" size={20} color="#2440D8" />
+          <h2 className="h2">マネーフォワード クラウドBoxから取り込む</h2>
+        </div>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{open ? "閉じる" : "期間を指定して探す"}</button>
+      </div>
+      {open && (
+        <>
+          <form className="row wrap" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={search}>
+            <label className="field" style={{ width: 170 }}><span>期間（開始）</span><input className="inp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+            <label className="field" style={{ width: 170 }}><span>期間（終了）</span><input className="inp" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+            <label className="field" style={{ flex: "1 1 200px" }}><span>ファイル名のキーワード（任意）</span><input className="inp" value={q} onChange={(e) => setQ(e.target.value)} placeholder="請求、取引先名など" /></label>
+            <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? "検索中…" : "検索"}</button>
+          </form>
+          {note && <p className="muted" style={{ fontSize: 12, margin: 0 }}>{note}</p>}
+          {items && (
+            items.length === 0 ? <div className="empty">条件に合うPDF・画像はありませんでした</div> : (
+              <>
+                <div className="scroll-x" style={{ maxHeight: 360, overflowY: "auto", border: "1px solid #EFEDE8", borderRadius: 12 }}>
+                  <table className="tbl">
+                    <thead><tr><th><span className="sr">選択</span></th><th>ファイル名</th><th>日付</th><th className="r">サイズ</th><th /></tr></thead>
+                    <tbody>
+                      {items.map((it) => (
+                        <tr key={it.id}>
+                          <td>{!it.imported && <input type="checkbox" aria-label={`${it.name}を選択`} checked={picked.has(it.id)} onChange={() => toggle(it.id)} style={{ width: 18, height: 18, accentColor: "#2440D8" }} />}</td>
+                          <td style={{ fontWeight: 600, wordBreak: "break-all" }}>{it.name}</td>
+                          <td className="num nw">{it.date ?? "—"}</td>
+                          <td className="num r nw">{kb(it.size)}</td>
+                          <td>{it.imported && <span className="chip st-ok">取込済</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="row wrap" style={{ gap: 10 }}>
+                  <span className="muted" style={{ fontSize: 13 }}>{picked.size}件選択中（一度に20件まで）</span>
+                  <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={importPicked}>{busy ? "取り込み中…" : "選んだファイルを取り込む"}</button>
+                </div>
+              </>
+            )
+          )}
+          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>クラウドBoxは読み取りのみで、Box側のファイルは変更・削除しません。取り込んだ書類は原本がBoxにあるため「保存済」として扱い、二重に取り込まれないようにしています。</p>
+        </>
+      )}
+    </section>
   );
 }
