@@ -1,5 +1,5 @@
 import { authorize, json } from "@/lib/server";
-import { kindOfFolder, parseBoxName, type BoxRow } from "@/lib/boxname";
+import { kindOfFolder, normalizePayee, parseBoxName, type BoxRow } from "@/lib/boxname";
 
 export const runtime = "nodejs";
 
@@ -59,6 +59,17 @@ export async function POST(req: Request) {
     })));
     if (pe) { errors.push(pe.message); continue; }
     added += chunk.length;
+  }
+
+  // 既存の支払予定の表記ゆれも統一する
+  const { data: names0 } = await admin.from("payments").select("payee_name").eq("company_id", cid);
+  for (const n of [...new Set((names0 ?? []).map((x) => x.payee_name))]) {
+    const to = normalizePayee(n);
+    if (to !== n) {
+      await admin.from("payees").upsert({ company_id: cid, name: to }, { onConflict: "company_id,name", ignoreDuplicates: true });
+      const { data: pz } = await admin.from("payees").select("id").eq("company_id", cid).eq("name", to).single();
+      await admin.from("payments").update({ payee_name: to, payee_id: pz?.id ?? null }).eq("company_id", cid).eq("payee_name", n);
+    }
   }
 
   // 2か月以上出てくる支払先は毎月固定へ

@@ -49,9 +49,10 @@ export function parseBoxName(r: BoxRow, year: number): ParsedPay {
   // 支払先：】の後ろから、請求書・○月分・日付・括弧の手前まで
   let rest = name.slice((m.index ?? 0) + m[0].length).replace(/^[_\s]+/, "").replace(/^\d{6}_/, "");
   rest = rest.replace(/株式会社リージャー様?/g, "");
-  const stop = rest.search(/(\d{1,2}[-・]?\d{0,2}月分|請求書|支払通知書|ご請求|\d{4}年|\d{8}|保険料納入|に係る|\d{3,}円|[(（_]|\s)/);
+  const stop = rest.search(/(\d{1,2}[-・]?\d{0,2}月分|請求書|支払通知書|ご請求|\d{4}年|\d{8}|保険料納入|に係る|のお知らせ|\d{3,}円|[(（_]|\s)/);
   let payee = (stop > 0 ? rest.slice(0, stop) : rest).trim();
   if (!payee) payee = rest.slice(0, 20).trim();
+  payee = normalizePayee(payee);
   const item = rest.replace(/\d{8,9}/g, "").replace(/[(（][\d,円+\s]+[)）]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
   if (amount == null) return { ...base, due, method, payee, item, skip: "金額の記載なし" };
   return { ...base, due, method, payee, item, amount };
@@ -60,3 +61,20 @@ export function parseBoxName(r: BoxRow, year: number): ParsedPay {
 /** フォルダ名から固定費／臨時の初期値 */
 export const kindOfFolder = (folder: string): "fixed" | "spot" =>
   /引落|システム部|事務所|契約書|報酬/.test(folder) ? "fixed" : "spot";
+
+/** 表記ゆれの統一（同じ支払先を1つにまとめる） */
+const ALIASES: [RegExp, string][] = [
+  [/^(いずみや|イズミヤ)/, "イズミヤ"],
+  [/^コロナ技研(工業)?$/, "コロナ技研工業"],
+  [/^(大同生命保険料?|大同生命保険\d*月?分?|総合団体福祉定期保険)$/, "大同生命保険"],
+  [/^労働保険料/, "労働保険料"],
+  [/固定資産税/, "固定資産税・都市計画税"],
+  [/^窪寺/, "窪寺（顧問契約）"],
+  [/^三菱地所(ﾘｱﾙｴｽﾃｰﾄ|リアルエステート)/, "三菱地所リアルエステートサービス"],
+  [/^IMS\s?Me-Life/, "IMS Me-Lifeクリニック"],
+  [/^プロサイド/, "プロサイド"],
+];
+export function normalizePayee(name: string) {
+  for (const [re, to] of ALIASES) if (re.test(name)) return to;
+  return name;
+}
