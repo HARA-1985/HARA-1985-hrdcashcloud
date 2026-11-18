@@ -42,4 +42,17 @@ for (const f of files) {
   }
 }
 console.log(`[migrate] 完了（新規 ${applied} 件 / 全 ${files.length} 件）`);
+
+// 状態の確認（ログに出すだけ）
+const hist = await client.query("select version, applied_at from private.schema_migrations order by version");
+console.log("[migrate] 適用履歴:", hist.rows.map((r) => `${r.version}@${new Date(r.applied_at).toISOString()}`).join(", "));
+const t = await client.query(`select c.relname, c.relrowsecurity as rls,
+  (select count(*) from pg_policies p where p.schemaname = 'public' and p.tablename = c.relname) as policies
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relkind = 'r' order by c.relname`);
+console.log("[migrate] public テーブル:", t.rows.map((r) => `${r.relname}(RLS:${r.rls ? "ON" : "OFF"},policy:${r.policies})`).join(" "));
+const b = await client.query("select id, public from storage.buckets where id = 'inbox'");
+console.log("[migrate] inbox バケット:", b.rows.length ? (b.rows[0].public ? "公開(要確認)" : "非公開") : "なし");
+const tg = await client.query("select count(*)::int as n from pg_trigger where tgname in ('on_auth_user_created','payments_guard')");
+console.log("[migrate] 統制トリガー:", tg.rows[0].n, "/ 2");
 await client.end();
