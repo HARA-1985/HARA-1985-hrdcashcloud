@@ -3,7 +3,8 @@ export type Kind = "fixed" | "spot";
 export type Source = "invoice" | "expense" | "card" | "manual";
 export type PayStatus = "pending" | "approved" | "auto_debit" | "paid" | "cancelled";
 
-export interface Company { id: string; name: string; name_kana: string | null; kind: "hrd" | "client"; mf_plan: string | null }
+export interface MfAccountMap { titles?: Record<string, string>; banks?: Record<string, string> }
+export interface Company { id: string; name: string; name_kana: string | null; kind: "hrd" | "client"; mf_plan: string | null; mf_account_map?: MfAccountMap | null }
 export interface Profile { id: string; display_name: string | null; email: string | null; is_hrd_staff: boolean }
 export interface Membership { company_id: string; user_id: string; role: Role }
 
@@ -30,6 +31,7 @@ export interface Payment {
   id: string; company_id: string; due_date: string; payee_id: string | null; payee_name: string; item: string | null;
   amount: number; kind: Kind; source: Source; bank_account_id: string | null; account_title: string;
   status: PayStatus; document_id: string | null; approved_at: string | null; created_at: string;
+  mf_sync_status?: "none" | "syncing" | "done" | "error"; mf_sync_error?: string | null; mf_journal_id?: string | null;
 }
 
 export interface CardTx {
@@ -37,7 +39,7 @@ export interface CardTx {
   suggested_account: string | null; receipt_document_id: string | null;
 }
 
-export interface MfConnection { company_id: string; status: "disconnected" | "connected" | "error"; office_name: string | null; last_synced_at: string | null }
+export interface MfConnection { company_id: string; status: "disconnected" | "connected" | "error"; office_name: string | null; office_code?: string | null; last_synced_at: string | null; connected_at?: string | null; last_error?: string | null }
 
 export interface AuditLog { id: number; actor: string | null; action: string; table_name: string; record_id: string | null; created_at: string }
 

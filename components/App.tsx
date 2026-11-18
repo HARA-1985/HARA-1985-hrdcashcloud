@@ -56,6 +56,18 @@ export default function App() {
     tRef.current = setTimeout(() => setToast(null), err ? 5000 : 2600);
   }, []);
 
+  /* --- マネーフォワード連携から戻ってきたとき --- */
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    const r = u.searchParams.get("mf");
+    if (!r) return;
+    const msg = u.searchParams.get("mf_msg");
+    if (r === "connected") { toast("マネーフォワードと連携しました"); setScreen("settings"); }
+    else toast(msg || "マネーフォワード連携に失敗しました", true);
+    u.searchParams.delete("mf"); u.searchParams.delete("mf_msg");
+    window.history.replaceState(null, "", u.pathname + u.search);
+  }, [toast]);
+
   /* --- auth --- */
   useEffect(() => {
     if (!supabaseConfigured()) { setSession(null); return; }
@@ -70,7 +82,7 @@ export default function App() {
     await sb().rpc("bootstrap");
     const [p, c, m] = await Promise.all([
       sb().from("profiles").select("id,display_name,email,is_hrd_staff").eq("id", session.user.id).single(),
-      sb().from("companies").select("id,name,name_kana,kind,mf_plan").order("kind", { ascending: true }).order("name"),
+      sb().from("companies").select("id,name,name_kana,kind,mf_plan,mf_account_map").order("kind", { ascending: true }).order("name"),
       sb().from("memberships").select("company_id,user_id,role").eq("user_id", session.user.id),
     ]);
     setMe((p.data as Profile) ?? null);

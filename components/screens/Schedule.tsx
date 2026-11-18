@@ -41,6 +41,23 @@ export default function Schedule({ ctx }: { ctx: Ctx }) {
     ctx.reload();
   }
 
+  const mfOn = ctx.mf?.status === "connected" && ctx.canApprove;
+  const mfTargets = rows.filter((p) => p.status === "paid" && p.mf_sync_status !== "done" && p.mf_sync_status !== "syncing").map((p) => p.id);
+
+  async function postToMf(ids: string[]) {
+    if (!ids.length) return;
+    setBusy(true);
+    const { data } = await sb().auth.getSession();
+    const res = await fetch("/api/mf/journal", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` }, body: JSON.stringify({ companyId: ctx.company.id, paymentIds: ids }) });
+    const j = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (!res.ok) { ctx.toast(j.error ?? "仕訳を登録できませんでした", true); return; }
+    const ng = (j.results ?? []).filter((r: { ok: boolean }) => !r.ok);
+    if (ng.length) ctx.toast(`${j.created}件登録、${ng.length}件失敗：${ng[0].message ?? ""}`, true);
+    else ctx.toast(`マネーフォワードに仕訳を${j.created}件登録しました`);
+    ctx.reload();
+  }
+
   const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const pendingPicked = rows.filter((p) => picked.has(p.id) && p.status === "pending").map((p) => p.id);
 
@@ -59,6 +76,13 @@ export default function Schedule({ ctx }: { ctx: Ctx }) {
         <span className="grow" />
         <span className="muted" style={{ fontSize: 13 }}>表示中 <strong className="num" style={{ color: "#17191E" }}>{rows.length}件 ／ {yen(sum(rows, (p) => p.amount))}</strong></span>
       </div>
+
+      {mfOn && mfTargets.length > 0 && (st === "paid" || st === "open") && (
+        <div className="card row wrap" style={{ padding: "12px 16px", gap: 12 }}>
+          <span>支払済みでマネーフォワード未登録：<strong className="num">{mfTargets.length}件</strong></span>
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => postToMf(mfTargets)}>まとめて仕訳登録</button>
+        </div>
+      )}
 
       {ctx.canApprove && pendingPicked.length > 0 && (
         <div className="card row wrap" style={{ padding: "12px 16px", gap: 12, background: "#F2F4FE", borderColor: "#C9D1F7" }}>
@@ -97,6 +121,13 @@ export default function Schedule({ ctx }: { ctx: Ctx }) {
                       {ctx.canApprove && p.status === "pending" && <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => setStatus([p.id], "approved", "承認しました：" + p.payee_name)}>承認</button>}
                       {ctx.canApprove && p.status === "approved" && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setStatus([p.id], "pending", "承認を取り消しました")}>承認取消</button>}
                       {ctx.canWrite && (p.status === "approved" || p.status === "auto_debit") && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setStatus([p.id], "paid", "支払済にしました")}>支払済にする</button>}
+                      {p.status === "paid" && p.mf_sync_status === "done" && <span className="chip st-ok">MF登録済</span>}
+                      {p.status === "paid" && p.mf_sync_status === "syncing" && <span className="chip st-wait">MF登録中</span>}
+                      {mfOn && p.status === "paid" && (p.mf_sync_status === "none" || p.mf_sync_status === "error" || !p.mf_sync_status) && (
+                        <button type="button" className="btn btn-sm" disabled={busy} title={p.mf_sync_error ?? undefined} onClick={() => postToMf([p.id])} style={p.mf_sync_status === "error" ? { borderColor: "#E9A3A3", color: "#9B1C1C" } : undefined}>
+                          {p.mf_sync_status === "error" ? "MF再登録" : "MFへ仕訳"}
+                        </button>
+                      )}
                       {ctx.canWrite && p.status === "pending" && <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => { if (confirm(`${p.payee_name} ${p.amt} を取り消しますか？`)) setStatus([p.id], "cancelled", "取り消しました"); }}>取消</button>}
                     </div>
                   </td>

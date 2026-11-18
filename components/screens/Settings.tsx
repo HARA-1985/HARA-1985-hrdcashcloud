@@ -1,14 +1,14 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import type { Ctx } from "../ctx";
 import { sb } from "@/lib/supabase";
 import { toZenginKana } from "@/lib/zengin";
-import { ROLE_LABEL, type AuditLog, type Membership, type Payee, type Role } from "@/lib/types";
+import { ACCOUNT_TITLES, ROLE_LABEL, type AuditLog, type MfAccountMap, type Membership, type Payee, type Role } from "@/lib/types";
 
 type Member = Membership & { name: string; email: string };
 
 const ACTION: Record<string, string> = { insert: "追加", update: "変更", delete: "削除" };
-const TABLE: Record<string, string> = { payments: "支払予定", documents: "書類", bank_accounts: "振込元口座", payees: "支払先", fb_exports: "FBデータ", memberships: "メンバー", companies: "会社" };
+const TABLE: Record<string, string> = { mf_connections: "マネーフォワード連携", mf_journals: "MF仕訳登録", payments: "支払予定", documents: "書類", bank_accounts: "振込元口座", payees: "支払先", fb_exports: "FBデータ", memberships: "メンバー", companies: "会社" };
 
 async function authedFetch(path: string, body: unknown) {
   const { data } = await sb().auth.getSession();
@@ -278,22 +278,82 @@ function MembersSection({ ctx, members, onChange }: { ctx: Ctx; members: Member[
 
 function MfSection({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false);
+  const [accounts, setAccounts] = useState<{ id: string; name: string; category: string; available: boolean }[] | null>(null);
+  const [map, setMap] = useState<MfAccountMap>(ctx.company.mf_account_map ?? {});
+  const st = ctx.mf?.status ?? "disconnected";
+  const connected = st === "connected";
+  const titles = [...new Set([...ACCOUNT_TITLES, ...ctx.payments.map((p) => p.account_title)])];
+
   async function connect() {
     setBusy(true);
     const r = await authedFetch("/api/mf/connect", { companyId: ctx.company.id });
     setBusy(false);
-    if (r.ok && r.url) window.location.href = r.url; else ctx.toast(r.error ?? "連携を開始できませんでした", true);
+    if (r.ok && r.url && r.url.startsWith("https://api.biz.moneyforward.com/")) window.location.href = r.url;
+    else ctx.toast(r.error ?? "連携を開始できませんでした", true);
   }
-  const st = ctx.mf?.status ?? "disconnected";
+  async function disconnect() {
+    if (!confirm("マネーフォワードとの連携を解除しますか？（保存している認証情報は削除され、元に戻せません。再連携は可能です）")) return;
+    setBusy(true);
+    const r = await authedFetch("/api/mf/disconnect", { companyId: ctx.company.id });
+    setBusy(false);
+    if (r.ok) { ctx.toast("連携を解除しました"); ctx.reload(); } else ctx.toast(r.error ?? "解除できませんでした", true);
+  }
+  async function loadAccounts() {
+    setBusy(true);
+    const r = await authedFetch("/api/mf/accounts", { companyId: ctx.company.id }) as { ok: boolean; error?: string; accounts?: typeof accounts };
+    setBusy(false);
+    if (r.ok && r.accounts) setAccounts(r.accounts); else ctx.toast(r.error ?? "勘定科目を取得できませんでした", true);
+  }
+  async function saveMap() {
+    const { error } = await sb().from("companies").update({ mf_account_map: map }).eq("id", ctx.company.id);
+    if (error) ctx.toast(error.message, true); else { ctx.toast("勘定科目の対応表を保存しました"); ctx.reloadOrg(); }
+  }
+  const opts = (accounts ?? []).filter((a) => a.available);
+  const Sel = ({ value, onChange, label }: { value?: string; onChange: (v: string) => void; label: string }) => (
+    <select className="inp" aria-label={label} value={value ?? ""} onChange={(e) => onChange(e.target.value)} style={{ maxWidth: 320 }}>
+      <option value="">未設定</option>
+      {opts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.category ? `（${a.category}）` : ""}</option>)}
+      {value && !opts.some((a) => a.id === value) && <option value={value}>設定済み（ID：{value.slice(0, 8)}…）</option>}
+    </select>
+  );
+
   return (
-    <section className="card pad stack" style={{ gap: 12 }}>
+    <section className="card pad stack" style={{ gap: 14 }}>
       <h2 className="h2">マネーフォワード連携</h2>
       <div style={{ display: "grid", gridTemplateColumns: "160px minmax(0,1fr)", gap: "10px 14px", fontSize: 14 }}>
-        <span className="muted">状態</span><span><span className={"chip " + (st === "connected" ? "st-ok" : st === "error" ? "st-err" : "st-auto")}>{st === "connected" ? "連携中" : st === "error" ? "エラー" : "未連携"}</span></span>
-        <span className="muted">使う機能</span><span>クラウド会計（仕訳・証憑添付）／ クラウドBox（原本保管）／ カード明細の取得</span>
-        <span className="muted">接続先</span><span>この会社が契約しているマネーフォワード クラウド</span>
+        <span className="muted">状態</span>
+        <span><span className={"chip " + (connected ? "st-ok" : st === "error" ? "st-err" : "st-auto")}>{connected ? "連携中" : st === "error" ? "エラー" : "未連携"}</span>{ctx.mf?.office_name ? `　${ctx.mf.office_name}` : ""}</span>
+        {ctx.mf?.last_error && <><span className="muted">エラー</span><span style={{ color: "#9B1C1C" }}>{ctx.mf.last_error}</span></>}
+        <span className="muted">連携する機能</span><span>クラウド会計（支払仕訳の登録・勘定科目の参照）／ クラウドBox（API仕様の受領後に追加）</span>
+        <span className="muted">安全対策</span><span className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>この会社が契約しているマネーフォワードで本人が承認（OAuth）。認証情報はサーバー側で暗号化保存し、画面からは読めません。連携・解除・仕訳登録はすべて操作ログに残ります。</span>
       </div>
-      {ctx.isOwner && <button type="button" className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={connect}>{st === "connected" ? "連携し直す" : "マネーフォワードと連携する"}</button>}
+      {ctx.isOwner && (
+        <div className="row wrap" style={{ gap: 8 }}>
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={connect}>{connected ? "連携し直す" : "マネーフォワードと連携する"}</button>
+          {(connected || st === "error") && <button type="button" className="btn" disabled={busy} onClick={disconnect}>連携を解除</button>}
+        </div>
+      )}
+
+      {connected && ctx.canApprove && (
+        <div className="stack" style={{ gap: 12, paddingTop: 8, borderTop: "1px solid #EFEDE8" }}>
+          <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
+            <strong>勘定科目の対応表</strong>
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={loadAccounts}>{accounts ? "再読み込み" : "マネーフォワードの勘定科目を読み込む"}</button>
+          </div>
+          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>支払済みにした支払を仕訳にするとき、借方（買掛金・未払金など）と貸方（振込元の預金口座）に使う科目を選びます。</p>
+          {accounts && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "160px minmax(0,1fr)", gap: "8px 14px", alignItems: "center", fontSize: 14 }}>
+                <span className="lbl" style={{ gridColumn: "1 / -1" }}>借方（支払の相手科目）</span>
+                {titles.map((t) => <Fragment key={t}><span>{t}</span><Sel label={`${t}に対応する科目`} value={map.titles?.[t]} onChange={(v) => setMap((m) => ({ ...m, titles: { ...(m.titles ?? {}), [t]: v } }))} /></Fragment>)}
+                <span className="lbl" style={{ gridColumn: "1 / -1", marginTop: 6 }}>貸方（振込元口座）</span>
+                {ctx.banks.map((b) => <Fragment key={b.id}><span>{b.bank_name} {b.branch_name ?? ""}</span><Sel label={`${b.bank_name}に対応する科目`} value={map.banks?.[b.id]} onChange={(v) => setMap((m) => ({ ...m, banks: { ...(m.banks ?? {}), [b.id]: v } }))} /></Fragment>)}
+              </div>
+              {ctx.isOwner && <button type="button" className="btn btn-primary" style={{ alignSelf: "flex-start" }} onClick={saveMap}>対応表を保存</button>}
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }
