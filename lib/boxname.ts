@@ -71,7 +71,7 @@ const ALIASES: [RegExp, string][] = [
   [/固定資産税/, "固定資産税・都市計画税"],
   [/^窪寺/, "窪寺（顧問契約）"],
   [/^三菱地所(ﾘｱﾙｴｽﾃｰﾄ|リアルエステート)/, "三菱地所リアルエステートサービス"],
-  [/^IMS\s?Me-Life/, "IMS Me-Lifeクリニック"],
+  [/^IMS/, "IMS Me-Lifeクリニック"],
   [/^プロサイド/, "プロサイド"],
 ];
 export function normalizePayee(name: string) {
