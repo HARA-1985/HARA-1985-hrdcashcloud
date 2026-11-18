@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Ctx } from "../ctx";
 import { sb } from "@/lib/supabase";
 import { parseDate, toISO, yen } from "@/lib/format";
@@ -194,46 +194,88 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
   );
 }
 
-/* ---------- クラウドBoxから取り込む ---------- */
-interface BoxItem { id: string; name: string; size: number; date: string | null; dateKey: string | null; imported: boolean; blocked?: boolean }
+/* ---------- クラウドBoxから取り込む（フォルダをクリックで選ぶ） ---------- */
+interface BoxItem { id: string; name: string; size: number; date: string | null; folder: string; imported: boolean; blocked?: boolean; payee?: string | null; amount?: number | null }
+type ImportResult = { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean; extracted?: Ex };
+
+const LAST_FOLDER_KEY = "hrd.boxFolder.v2";
+const store = {
+  get: (k: string) => { try { return window.localStorage.getItem(k); } catch { return null; } },
+  set: (k: string, v: string) => { try { window.localStorage.setItem(k, v); } catch { /* noop */ } },
+};
 
 function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: "invoice" | "receipt"; onImported: (list: { docId: string; fileName: string; extracted?: Ex }[]) => void; onManual: (file: File, boxId: string) => Promise<number> }) {
-  const t = new Date();
   const [open, setOpen] = useState(false);
-  const [from, setFrom] = useState(toISO(new Date(t.getFullYear(), t.getMonth() - 1, 1)));
-  const [to, setTo] = useState(toISO(t));
-  const [q, setQ] = useState(docType === "invoice" ? "請求" : "");
-  const [items, setItems] = useState<BoxItem[] | null>(null);
-  const [note, setNote] = useState("");
+  const [all, setAll] = useState<BoxItem[] | null>(null);
+  const [folderSupported, setFolderSupported] = useState(true);
+  const [fields, setFields] = useState<string[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [cur, setCur] = useState<string>("");
+  const [withSub, setWithSub] = useState(false);
+  const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"folder" | "range">("folder");
-  const [folder, setFolder] = useState(() => { try { return window.localStorage.getItem("hrd.boxFolder") ?? "経理/月次決算資料/03.支払請求書"; } catch { return "経理/月次決算資料/03.支払請求書"; } });
-  const [includeSub, setIncludeSub] = useState(false);
-  const [diag, setDiag] = useState<{ fields: string[]; folders: string[] } | null>(null);
   const [progress, setProgress] = useState("");
+  const lastFolder = store.get(`${LAST_FOLDER_KEY}:${ctx.company.id}`);
 
-  async function loadFolder(e?: React.FormEvent) {
-    e?.preventDefault();
-    try { window.localStorage.setItem("hrd.boxFolder", folder); } catch { /* noop */ }
-    setBusy(true); setPicked(new Set()); setNote(""); setDiag(null); setItems(null);
-    const { ok, j } = await call("/api/mf/box/folder", { companyId: ctx.company.id, path: folder, includeSub });
+  async function call(path: string, payload: unknown) { return authedPost(path, payload); }
+
+  async function load(goTo?: string) {
+    setBusy(true); setPicked(new Set());
+    const { ok, j } = await call("/api/mf/box/folder", { companyId: ctx.company.id });
     setBusy(false);
     if (!ok) { ctx.toast(j.error ?? "クラウドBoxを読み込めませんでした", true); return; }
-    if (!j.folderSupported) {
-      setDiag({ fields: j.fields ?? [], folders: [] });
-      setNote(`クラウドBox APIの一覧（${j.totalFiles}件）にフォルダの情報が含まれていないため、フォルダで絞り込めませんでした。下の「APIが返した項目」を開発担当に共有してください。当面は「期間で探す」をお使いください。`);
-      return;
-    }
-    const list = (j.items ?? []) as (BoxItem & { folder: string | null; payee: string | null; amount: number | null })[];
-    setItems(list);
-    setPicked(new Set(list.filter((x) => !x.imported).slice(0, 500).map((x) => x.id)));
-    if (!list.length) { setDiag({ fields: [], folders: j.folders ?? [] }); setNote("指定のフォルダにPDF・画像が見つかりませんでした。フォルダ名を確認してください（下に、見つかったフォルダの一覧を表示しています）。"); }
-    else if (j.truncated) setNote("ファイル数が多いため、途中までの一覧です。");
+    const items = (j.items ?? []) as BoxItem[];
+    setAll(items); setFolderSupported(!!j.folderSupported); setFields(j.fields ?? []); setTruncated(!!j.truncated);
+    const target = goTo ?? lastFolder ?? "";
+    const exists = target && items.some((it) => it.folder === target || it.folder.startsWith(target + "/"));
+    setCur(exists ? target : "");
+  }
+  function openPanel() {
+    const next = !open;
+    setOpen(next);
+    if (next && !all) load();
+  }
+  function goFolder(path: string) {
+    setCur(path); setPicked(new Set()); setQ("");
+    if (path) store.set(`${LAST_FOLDER_KEY}:${ctx.company.id}`, path);
   }
 
-  async function importAll() {
-    const ids = [...picked];
+  // 現在のフォルダ直下のサブフォルダ（件数つき）
+  const subfolders = useMemo(() => {
+    if (!all || !folderSupported) return [] as { path: string; name: string; count: number; pending: number }[];
+    const m = new Map<string, { count: number; pending: number }>();
+    for (const it of all) {
+      if (!it.folder) continue;
+      if (cur && !(it.folder === cur || it.folder.startsWith(cur + "/"))) continue;
+      const rest = cur ? it.folder.slice(cur.length + 1) : it.folder;
+      if (!rest) continue;
+      const name = rest.split("/")[0];
+      const path = cur ? `${cur}/${name}` : name;
+      const v = m.get(path) ?? { count: 0, pending: 0 };
+      v.count++; if (!it.imported) v.pending++;
+      m.set(path, v);
+    }
+    return [...m.entries()].map(([path, v]) => ({ path, name: path.split("/").pop() ?? path, ...v })).sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }, [all, cur, folderSupported]);
+
+  // 表示するファイル
+  const files = useMemo(() => {
+    if (!all) return [] as BoxItem[];
+    const kw = q.trim().toLowerCase();
+    return all.filter((it) => {
+      if (folderSupported) {
+        if (withSub) { if (cur && !(it.folder === cur || it.folder.startsWith(cur + "/"))) return false; }
+        else if (it.folder !== cur) return false;
+      }
+      return !kw || it.name.toLowerCase().includes(kw) || (it.payee ?? "").toLowerCase().includes(kw);
+    }).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "") || a.name.localeCompare(b.name, "ja"));
+  }, [all, cur, withSub, q, folderSupported]);
+
+  const pending = files.filter((f) => !f.imported && !f.blocked);
+  const crumbs = cur ? cur.split("/") : [];
+
+  async function importIds(ids: string[]) {
     if (!ids.length) return;
     setBusy(true);
     let okN = 0, blockedN = 0, ngN = 0; let firstErr = "";
@@ -241,8 +283,8 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
       const batch = ids.slice(i, i + 10);
       setProgress(`取り込み中… ${Math.min(i + batch.length, ids.length)} / ${ids.length}件（請求書の内容も読み取っています）`);
       const { ok, j } = await call("/api/mf/box/import", { companyId: ctx.company.id, fileIds: batch, docType });
-      if (!ok) { firstErr = j.error ?? "取り込めませんでした"; ngN += batch.length; break; }
-      const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean; extracted?: Ex }[];
+      if (!ok) { firstErr = j.error ?? "取り込めませんでした"; ngN += ids.length - i; break; }
+      const res = (j.results ?? []) as ImportResult[];
       const good = res.filter((r) => r.ok && r.docId).map((r) => ({ docId: r.docId!, fileName: r.fileName ?? "", extracted: r.extracted }));
       if (good.length) onImported(good);
       const goodIds = new Set(res.filter((r) => r.ok).map((r) => r.fileId));
@@ -250,55 +292,17 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
       okN += goodIds.size; blockedN += blockedIds.size;
       const other = res.filter((r) => !r.ok && !r.internal);
       ngN += other.length; if (!firstErr && other[0]) firstErr = other[0].message ?? "";
-      setItems((cur) => cur?.map((it) => (goodIds.has(it.id) ? { ...it, imported: true } : blockedIds.has(it.id) ? { ...it, blocked: true } : it)) ?? null);
-      setPicked((cur) => { const n = new Set(cur); batch.forEach((b) => n.delete(b)); return n; });
+      setAll((curAll) => curAll?.map((it) => (goodIds.has(it.id) ? { ...it, imported: true } : blockedIds.has(it.id) ? { ...it, blocked: true } : it)) ?? null);
+      setPicked((p) => { const n = new Set(p); batch.forEach((b) => n.delete(b)); return n; });
     }
     setBusy(false); setProgress("");
     const parts = [`${okN}件取り込みました`];
-    if (blockedN) parts.push(`${blockedN}件はAPIで取り出せないため、一覧の「Boxで開く」「ファイルを置く」で取り込んでください`);
+    if (blockedN) parts.push(`${blockedN}件はAPIで取り出せないため、行の「Boxで開く」「ファイルを置く」で取り込んでください`);
     if (ngN) parts.push(`${ngN}件できませんでした：${firstErr}`);
     ctx.toast(parts.join("。"), blockedN + ngN > 0);
   }
 
-  async function call(path: string, payload: unknown) {
-    const { data } = await sb().auth.getSession();
-    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` }, body: JSON.stringify(payload) });
-    return { ok: res.ok, j: await res.json().catch(() => ({})) };
-  }
-  async function search(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (from && to && from > to) { ctx.toast("期間の開始日が終了日より後になっています", true); return; }
-    setBusy(true); setPicked(new Set()); setNote("");
-    const { ok, j } = await call("/api/mf/box/files", { companyId: ctx.company.id, from, to, q });
-    setBusy(false);
-    if (!ok) { ctx.toast(j.error ?? "クラウドBoxを検索できませんでした", true); return; }
-    setItems(j.items ?? []);
-    const notes: string[] = [];
-    if (j.noDateField) notes.push("Boxの一覧に日付情報が無いため、期間では絞り込めていません（キーワードで絞り込んでください）");
-    if (j.truncated) notes.push("件数が多いため一部のみ表示しています。期間やキーワードを絞ってください");
-    setNote(notes.join(" ／ "));
-  }
-  async function importPicked() {
-    const ids = [...picked].slice(0, 20);
-    if (!ids.length) return;
-    setBusy(true);
-    const { ok, j } = await call("/api/mf/box/import", { companyId: ctx.company.id, fileIds: ids, docType });
-    setBusy(false);
-    if (!ok) { ctx.toast(j.error ?? "取り込めませんでした", true); return; }
-    const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean; extracted?: Ex }[];
-    const good = res.filter((r) => r.ok && r.docId).map((r) => ({ docId: r.docId!, fileName: r.fileName ?? "", extracted: r.extracted }));
-    const bad = res.filter((r) => !r.ok);
-    if (good.length) onImported(good);
-    const goodIds = new Set(res.filter((r) => r.ok).map((r) => r.fileId));
-    const blockedIds = new Set(res.filter((r) => r.internal).map((r) => r.fileId));
-    setItems((cur) => cur?.map((it) => (goodIds.has(it.id) ? { ...it, imported: true } : blockedIds.has(it.id) ? { ...it, blocked: true } : it)) ?? null);
-    setPicked(new Set());
-    const other = bad.filter((r) => !r.internal);
-    if (blockedIds.size && !other.length) ctx.toast(`${good.length}件取り込みました。${blockedIds.size}件はAPIで取り出せないファイルです。一覧の「Boxで開く」からダウンロードし、その行の「ファイルを置く」で取り込んでください`, true);
-    else if (bad.length) ctx.toast(`${good.length}件取り込み、${bad.length}件できませんでした：${(other[0] ?? bad[0]).message ?? ""}`, true);
-    else ctx.toast(`クラウドBoxから${good.length}件取り込みました。右の「内容の確認」で支払予定に登録してください`);
-  }
-  const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else if (mode === "folder" || n.size < 20) n.add(id); return n; });
+  const toggle = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const kb = (n: number) => (n >= 1048576 ? (n / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(n / 1024)) + "KB");
 
   return (
@@ -308,94 +312,125 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
           <Icon name="folders" size={20} color="#2440D8" />
           <h2 className="h2">マネーフォワード クラウドBoxから取り込む</h2>
         </div>
-        <button type="button" className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{open ? "閉じる" : "期間を指定して探す"}</button>
+        <div className="row" style={{ gap: 8 }}>
+          {open && all && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => load(cur)}>最新に更新</button>}
+          <button type="button" className="btn btn-sm" onClick={openPanel} aria-expanded={open}>{open ? "閉じる" : "Boxのフォルダを開く"}</button>
+        </div>
       </div>
-      {open && (
+
+      {open && !all && <div className="skeleton" style={{ height: 120 }} aria-label="読み込み中" />}
+
+      {open && all && (
         <>
-          <div className="row wrap" style={{ gap: 8 }}>
-            <button type="button" className={"pill" + (mode === "folder" ? " is-on" : "")} aria-pressed={mode === "folder"} onClick={() => { setMode("folder"); setItems(null); setNote(""); setDiag(null); }}>フォルダから一括取込</button>
-            <button type="button" className={"pill" + (mode === "range" ? " is-on" : "")} aria-pressed={mode === "range"} onClick={() => { setMode("range"); setItems(null); setNote(""); setDiag(null); }}>期間で探す</button>
+          {!folderSupported && (
+            <div className="stack" style={{ gap: 8, padding: 12, borderRadius: 10, background: "#FFF8F3", border: "1px solid #F0C9AE", fontSize: 13, lineHeight: 1.7 }}>
+              <span>クラウドBox APIの一覧にフォルダの情報が含まれていないため、フォルダ別に表示できません。Boxの書類をすべて新しい順に表示しています（上の検索欄で絞り込めます）。</span>
+              <details><summary style={{ cursor: "pointer" }}>APIが返した項目（値は含みません）</summary>
+                <pre style={{ fontSize: 11, whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{fields.join("\n")}</pre>
+              </details>
+            </div>
+          )}
+
+          {folderSupported && (
+            <>
+              {/* パンくず */}
+              <nav aria-label="フォルダの場所" className="row wrap" style={{ gap: 4, fontSize: 14 }}>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => goFolder("")} style={{ fontWeight: cur ? 400 : 700 }}>すべてのフォルダ</button>
+                {crumbs.map((c, i) => {
+                  const path = crumbs.slice(0, i + 1).join("/");
+                  return (
+                    <span key={path} className="row" style={{ gap: 4 }}>
+                      <span className="muted">›</span>
+                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => goFolder(path)} style={{ fontWeight: i === crumbs.length - 1 ? 700 : 400 }}>{c}</button>
+                    </span>
+                  );
+                })}
+                {lastFolder && lastFolder !== cur && (
+                  <button type="button" className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => goFolder(lastFolder)}>前回のフォルダ：{lastFolder.split("/").pop()}</button>
+                )}
+              </nav>
+
+              {/* サブフォルダ */}
+              {subfolders.length > 0 && (
+                <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+                  {subfolders.map((f) => (
+                    <button key={f.path} type="button" className="tile" onClick={() => goFolder(f.path)} style={{ padding: 12 }}>
+                      <span className="row" style={{ gap: 8 }}><Icon name="folders" size={18} color="#2440D8" /><strong style={{ fontSize: 14 }}>{f.name}</strong></span>
+                      <span className="num muted" style={{ fontSize: 12 }}>{f.count}件{f.pending ? `（未取込 ${f.pending}件）` : "（すべて取込済）"}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ファイル一覧 */}
+          <div className="row wrap" style={{ gap: 10, alignItems: "center" }}>
+            <label htmlFor="boxq" className="sr">ファイル名・取引先で絞り込み</label>
+            <input id="boxq" className="inp" style={{ flex: "1 1 220px", height: 38 }} placeholder="ファイル名・取引先で絞り込み" value={q} onChange={(e) => setQ(e.target.value)} />
+            {folderSupported && subfolders.length > 0 && (
+              <label className="row" style={{ gap: 6, fontSize: 13 }}><input type="checkbox" checked={withSub} onChange={(e) => setWithSub(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#2440D8" }} />下のフォルダの書類も表示</label>
+            )}
           </div>
-          {mode === "folder" && (
-            <form className="row wrap" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={loadFolder}>
-              <label className="field" style={{ flex: "1 1 320px" }}><span>クラウドBoxのフォルダ（「/」区切り）</span><input className="inp" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="経理/月次決算資料/03.支払請求書" /></label>
-              <label className="row" style={{ gap: 6, fontSize: 13, height: 44 }}><input type="checkbox" checked={includeSub} onChange={(e) => setIncludeSub(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#2440D8" }} />下の階層のフォルダも含める</label>
-              <button className="btn btn-primary" type="submit" disabled={busy}>{busy && !progress ? "読み込み中…" : "フォルダを読み込む"}</button>
-            </form>
-          )}
-          {mode === "range" && (
-          <form className="row wrap" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={search}>
-            <label className="field" style={{ width: 170 }}><span>期間（開始）</span><input className="inp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-            <label className="field" style={{ width: 170 }}><span>期間（終了）</span><input className="inp" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
-            <label className="field" style={{ flex: "1 1 200px" }}><span>ファイル名のキーワード（任意）</span><input className="inp" value={q} onChange={(e) => setQ(e.target.value)} placeholder="請求、取引先名など" /></label>
-            <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? "検索中…" : "検索"}</button>
-          </form>
-          )}
-          {note && <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>{note}</p>}
-          {diag && diag.folders.length > 0 && (
-            <details><summary style={{ cursor: "pointer", fontSize: 13 }}>見つかったフォルダ（{diag.folders.length}）</summary>
-              <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>{diag.folders.map((f) => <button key={f} type="button" className="pill" onClick={() => setFolder(f)}>{f}</button>)}</div>
-            </details>
-          )}
-          {diag && diag.fields.length > 0 && (
-            <details><summary style={{ cursor: "pointer", fontSize: 13 }}>APIが返した項目（値は含みません）</summary>
-              <pre style={{ fontSize: 11, background: "#F5F4F0", padding: 10, borderRadius: 8, whiteSpace: "pre-wrap", margin: "8px 0 0" }}>{diag.fields.join("\n")}</pre>
-            </details>
+
+          {files.length === 0 ? (
+            <div className="empty">{folderSupported && subfolders.length ? "このフォルダには書類がありません。上のフォルダをクリックして開いてください。" : "書類がありません"}</div>
+          ) : (
+            <>
+              <div className="scroll-x" style={{ maxHeight: 380, overflowY: "auto", border: "1px solid #EFEDE8", borderRadius: 12 }}>
+                <table className="tbl">
+                  <thead><tr>
+                    <th><input type="checkbox" aria-label="未取込をすべて選択" checked={pending.length > 0 && pending.every((p) => picked.has(p.id))} onChange={(e) => setPicked(e.target.checked ? new Set(pending.map((p) => p.id)) : new Set())} style={{ width: 18, height: 18, accentColor: "#2440D8" }} /></th>
+                    <th>ファイル</th><th>日付</th><th className="r">サイズ</th><th />
+                  </tr></thead>
+                  <tbody>
+                    {files.map((it) => (
+                      <tr key={it.id}>
+                        <td>{!it.imported && !it.blocked && <input type="checkbox" aria-label={`${it.name}を選択`} checked={picked.has(it.id)} onChange={() => toggle(it.id)} style={{ width: 18, height: 18, accentColor: "#2440D8" }} />}</td>
+                        <td style={{ wordBreak: "break-all" }}>
+                          <div style={{ fontWeight: 600 }}>{it.name}</div>
+                          {(it.payee || it.amount || (withSub && it.folder !== cur)) && (
+                            <div className="muted" style={{ fontSize: 12 }}>{[it.payee, it.amount ? yen(it.amount) : null, withSub && it.folder !== cur ? it.folder : null].filter(Boolean).join(" ・ ")}</div>
+                          )}
+                        </td>
+                        <td className="num nw">{it.date ?? "—"}</td>
+                        <td className="num r nw">{kb(it.size)}</td>
+                        <td className="nw">
+                          {it.imported && <span className="chip st-ok">取込済</span>}
+                          {!it.imported && it.blocked && (
+                            <div className="row" style={{ gap: 6 }}>
+                              <a className="btn btn-sm" href={`https://box.moneyforward.com/files/${it.id}`} target="_blank" rel="noopener noreferrer">Boxで開く</a>
+                              <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }}>
+                                ファイルを置く
+                                <input className="sr" type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.webp" onChange={async (e) => {
+                                  const f = e.target.files?.[0]; e.target.value = "";
+                                  if (!f) return;
+                                  if (!(await onManual(f, it.id))) return;
+                                  setAll((c) => c?.map((x) => (x.id === it.id ? { ...x, imported: true } : x)) ?? null);
+                                }} />
+                              </label>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="row wrap" style={{ gap: 10 }}>
+                <span className="muted" style={{ fontSize: 13 }}>{files.length}件中 未取込 {pending.length}件 ・ 選択 {picked.size}件</span>
+                {pending.length > 0 && picked.size === 0 && (
+                  <button type="button" className="btn btn-primary" disabled={busy} onClick={() => importIds(pending.map((p) => p.id))}>{busy ? "取り込み中…" : `未取込の${pending.length}件をすべて取り込む`}</button>
+                )}
+                {picked.size > 0 && (
+                  <button type="button" className="btn btn-primary" disabled={busy} onClick={() => importIds([...picked])}>{busy ? "取り込み中…" : `選んだ${picked.size}件を取り込む`}</button>
+                )}
+              </div>
+              {truncated && <p className="muted" style={{ fontSize: 12, margin: 0 }}>Boxのファイルが多いため、新しいものから一部のみ読み込んでいます。</p>}
+            </>
           )}
           {progress && <span className="chip st-wait" style={{ alignSelf: "flex-start", height: "auto", padding: "6px 10px" }}>{progress}</span>}
-          {items && (
-            items.length === 0 ? <div className="empty">条件に合うPDF・画像はありませんでした</div> : (
-              <>
-                <div className="scroll-x" style={{ maxHeight: 360, overflowY: "auto", border: "1px solid #EFEDE8", borderRadius: 12 }}>
-                  <table className="tbl">
-                    <thead><tr><th><span className="sr">選択</span></th><th>ファイル名</th><th>日付</th><th className="r">サイズ</th><th /></tr></thead>
-                    <tbody>
-                      {items.map((it) => (
-                        <tr key={it.id}>
-                          <td>{!it.imported && <input type="checkbox" aria-label={`${it.name}を選択`} checked={picked.has(it.id)} onChange={() => toggle(it.id)} style={{ width: 18, height: 18, accentColor: "#2440D8" }} />}</td>
-                          <td style={{ wordBreak: "break-all" }}><div style={{ fontWeight: 600 }}>{it.name}</div>{(it as BoxItem & { payee?: string | null; amount?: number | null }).payee && <div className="muted" style={{ fontSize: 12 }}>{(it as BoxItem & { payee?: string | null }).payee}{(it as BoxItem & { amount?: number | null }).amount ? ` ・ ${yen((it as BoxItem & { amount?: number | null }).amount!)}` : ""}</div>}</td>
-                          <td className="num nw">{it.date ?? "—"}</td>
-                          <td className="num r nw">{kb(it.size)}</td>
-                          <td className="nw">
-                            {it.imported && <span className="chip st-ok">取込済</span>}
-                            {!it.imported && it.blocked && (
-                              <div className="row" style={{ gap: 6 }}>
-                                <a className="btn btn-sm" href={`https://box.moneyforward.com/files/${it.id}`} target="_blank" rel="noopener noreferrer">Boxで開く</a>
-                                <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }}>
-                                  ファイルを置く
-                                  <input className="sr" type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.webp" onChange={async (e) => {
-                                    const f = e.target.files?.[0]; e.target.value = "";
-                                    if (!f) return;
-                                    if (!(await onManual(f, it.id))) return;
-                                    setItems((cur) => cur?.map((x) => (x.id === it.id ? { ...x, imported: true } : x)) ?? null);
-                                  }} />
-                                </label>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="row wrap" style={{ gap: 10 }}>
-                  {mode === "range" ? (
-                    <>
-                      <span className="muted" style={{ fontSize: 13 }}>{picked.size}件選択中（一度に20件まで）</span>
-                      <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={importPicked}>{busy ? "取り込み中…" : "選んだファイルを取り込む"}</button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="muted" style={{ fontSize: 13 }}>{items.length}件中 未取込 {items.filter((x) => !x.imported).length}件 ・ 選択 {picked.size}件</span>
-                      <button type="button" className="btn btn-sm" onClick={() => setPicked(new Set(items.filter((x) => !x.imported && !x.blocked).map((x) => x.id)))}>未取込をすべて選択</button>
-                      <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={importAll}>{busy ? "取り込み中…" : `選んだ${picked.size}件を取り込んで支払情報を読み取る`}</button>
-                    </>
-                  )}
-                </div>
-              </>
-            )
-          )}
-          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>マネーフォワードの他サービス（クラウド会計の証憑添付・証憑自動取得など）から保存されたファイルは、マネーフォワードの仕様によりAPIでは取り出せません。その場合は行に「Boxで開く」「ファイルを置く」が出るので、Boxの画面でダウンロードしたファイルを置いてください（Boxのファイルと紐付けて記録します）。<br />クラウドBoxは読み取りのみで、Box側のファイルは変更・削除しません。取り込んだ書類は原本がBoxにあるため「保存済」として扱い、二重に取り込まれないようにしています。</p>
+          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>取り込むと支払先・金額・支払期限を自動で読み取り、右の「内容の確認」に入ります。Boxは読み取りのみで、Box側のファイルは変更・削除しません。マネーフォワードの他サービスから保存されたファイルはAPIで取り出せないため、行の「Boxで開く」「ファイルを置く」で取り込みます。</p>
         </>
       )}
     </section>
