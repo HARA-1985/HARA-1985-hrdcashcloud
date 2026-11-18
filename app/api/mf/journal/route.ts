@@ -34,11 +34,13 @@ export async function POST(req: Request) {
     try {
       const res = await mfApi<Record<string, unknown>>(cfg, a.admin, body.companyId, "/journals", {
         method: "POST",
-        // 公開情報で確認できた項目だけを送る（transaction_date / journal_type / branches の借方・貸方）
+        // 会計API v3：本文は { journal: {...} } で包む。明細は debitor / creditor（税込額を value に）
         body: JSON.stringify({
-          transaction_date: p.due_date,
-          journal_type: "journal_entry",
-          branches: [{ debitor: { account_id: debit, value: p.amount }, creditor: { account_id: credit, value: p.amount } }],
+          journal: {
+            transaction_date: p.due_date,
+            journal_type: "journal_entry",
+            branches: [{ debitor: { account_id: debit, value: p.amount }, creditor: { account_id: credit, value: p.amount }, remark: `${p.payee_name} ${p.item ?? ""}`.trim().slice(0, 100) }],
+          },
         }),
       });
       const j = (res?.journal ?? res) as Record<string, unknown>;

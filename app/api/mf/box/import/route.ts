@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { authorize, json } from "@/lib/server";
+import { extractInvoice, type Extracted } from "@/lib/extract";
 import { BoxInternalFile, BoxScopeMissing, MfApiError, MfNotConnected, boxDownload, boxErrorCode, boxRequest, mfConfig } from "@/lib/mf";
 
 const MAX_BYTES = 20 * 1024 * 1024; // 一時保管バケットの上限に合わせる
@@ -26,7 +27,9 @@ export async function POST(req: Request) {
   if (!ids.length) return json({ error: "取り込むファイルを選んでください" }, 400);
   const docType = body.docType === "receipt" ? "receipt" : "invoice";
 
-  const results: { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean }[] = [];
+  const results: { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean; extracted?: Extracted }[] = [];
+  const { data: co } = await a.admin.from("companies").select("name").eq("id", body.companyId).single();
+  const ownNames = [co?.name ?? ""].filter(Boolean);
   for (const fid of ids) {
     try {
       const { data: exists } = await a.admin.from("documents").select("id").eq("company_id", body.companyId).eq("mf_box_file_id", fid).maybeSingle();
@@ -51,7 +54,10 @@ export async function POST(req: Request) {
         temp_path: path, mf_box_file_id: fid, mf_box_status: "stored", source: "mf_box", uploaded_by: a.user.id,
       }).select("id").single();
       if (error || !doc) { await a.admin.storage.from("inbox").remove([path]); throw new Error(error?.message ?? "登録に失敗しました"); }
-      results.push({ fileId: fid, ok: true, docId: doc.id, fileName: name });
+      // 支払情報の読み取り（Boxの取引情報 → PDF文字情報 → AI[任意]）
+      const extracted = docType === "invoice" ? await extractInvoice(bytes, mime, f, ownNames).catch(() => ({ method: "none" as const })) : undefined;
+      if (extracted) await a.admin.from("documents").update({ ocr: extracted }).eq("id", doc.id);
+      results.push({ fileId: fid, ok: true, docId: doc.id, fileName: name, extracted });
     } catch (e) {
       results.push({ fileId: fid, ok: false, message: (e as Error).message.slice(0, 200), internal: e instanceof BoxInternalFile });
       if (e instanceof MfNotConnected || e instanceof BoxScopeMissing) break;

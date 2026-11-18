@@ -9,7 +9,15 @@ import Icon from "../Icon";
 interface Draft {
   key: string; docId: string; file: string;
   payee: string; item: string; amount: string; due: string; kind: Kind; account: string; bank: string;
-  saving?: boolean; saved?: boolean;
+  saving?: boolean; saved?: boolean; method?: Ex["method"]; note?: string; reading?: boolean;
+}
+interface Ex { payee?: string; amount?: number; due?: string; issue?: string; regNo?: string; invoiceNo?: string; method: "box" | "text" | "ai" | "none"; note?: string }
+const METHOD_LABEL: Record<Ex["method"], string> = { box: "Boxの取引情報", text: "PDFから読み取り", ai: "AIで読み取り", none: "読み取りできず" };
+
+async function authedPost(path: string, payload: unknown) {
+  const { data } = await sb().auth.getSession();
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` }, body: JSON.stringify(payload) });
+  return { ok: res.ok, j: await res.json().catch(() => ({})) };
 }
 
 const MAX = 20 * 1024 * 1024;
@@ -31,11 +39,22 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
   const inputRef = useRef<HTMLInputElement>(null);
   const isExp = mode === "expense";
 
-  const newDraft = (docId: string, file: string): Draft => ({
+  const applyEx = (d: Draft, ex?: Ex): Draft => {
+    if (!ex) return d;
+    const payee = ex.payee ? (ctx.payees.find((p) => p.name.replace(/\s/g, "") === ex.payee!.replace(/\s/g, ""))?.name ?? ex.payee) : d.payee;
+    const prior = ctx.payments.find((p) => p.payee_name === payee);
+    return {
+      ...d, payee, amount: ex.amount ? String(ex.amount) : d.amount, due: ex.due ?? d.due,
+      item: ex.invoiceNo ? `請求書 ${ex.invoiceNo}` : d.item, method: ex.method, note: ex.note,
+      // 同じ支払先の過去の設定（区分・勘定科目・口座）を引き継ぐ
+      ...(prior ? { kind: prior.kind, account: prior.account_title, bank: prior.bank_account_id ?? d.bank } : {}),
+    };
+  };
+  const newDraft = (docId: string, file: string, ex?: Ex): Draft => applyEx({
     key: docId, docId, file,
     payee: isExp ? (ctx.me?.display_name ?? "") : guessPayee(file), item: isExp ? "立替経費精算" : "",
     amount: "", due: endOfMonth(), kind: "spot", account: isExp ? "未払金" : "買掛金", bank: ctx.banks[0]?.id ?? "",
-  });
+  }, ex);
   const addDrafts = (ds: Draft[]) => setDrafts((cur) => [...ds.filter((d) => !cur.some((c) => c.key === d.key)), ...cur]);
 
   async function handle(files: File[], boxFileId?: string): Promise<number> {
@@ -63,8 +82,13 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
         ctx.toast(error?.code === "23505" ? `${f.name}：このBoxファイルは取り込み済みです` : `${f.name}：登録に失敗しました（${error?.message}）`, true);
         return;
       }
-      addDrafts([newDraft(data.id, f.name)]);
+      addDrafts([{ ...newDraft(data.id, f.name), reading: !isExp }]);
       okCount++;
+      if (!isExp) {
+        authedPost("/api/documents/extract", { companyId: ctx.company.id, docId: data.id }).then(({ ok, j }) => {
+          setDrafts((ds) => ds.map((x) => (x.key === data.id ? { ...(ok ? applyEx(x, j.extracted) : x), reading: false } : x)));
+        });
+      }
     }));
     ctx.reload();
     return okCount;
@@ -92,7 +116,7 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
   return (
     <div className="stack" style={{ gap: 16 }}>
     {ctx.mf?.status === "connected" && ctx.canWrite && (
-      <BoxImport ctx={ctx} docType={isExp ? "receipt" : "invoice"} onImported={(list) => { addDrafts(list.map((x) => newDraft(x.docId, x.fileName))); ctx.reload(); }}
+      <BoxImport ctx={ctx} docType={isExp ? "receipt" : "invoice"} onImported={(list) => { addDrafts(list.map((x) => newDraft(x.docId, x.fileName, x.extracted))); ctx.reload(); }}
         onManual={(file, boxId) => handle([file], boxId)} />
     )}
     <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", alignItems: "start" }}>
@@ -121,12 +145,23 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
           <span className="muted" style={{ fontSize: 12 }}>自動読み取り（AI-OCR）は次の段階で追加</span>
         </div>
         {drafts.length === 0 && <div className="empty">ファイルを置くと、ここで支払先・金額・支払日を確認して登録できます。</div>}
+        {(() => {
+          const ready = drafts.filter((d) => !d.saved && !d.saving && !d.reading && d.payee.trim() && Number(d.amount.replace(/[^\d]/g, "")) > 0 && d.due);
+          return ready.length > 1 ? (
+            <div className="row wrap" style={{ gap: 10, padding: "10px 12px", borderRadius: 10, background: "#F2F4FE" }}>
+              <span style={{ fontSize: 13 }}>支払先・金額・支払日がそろっている <strong className="num">{ready.length}件</strong></span>
+              <button type="button" className="btn btn-sm btn-primary" onClick={async () => { for (const d of ready) await save(d); }}>内容を確認したのでまとめて登録</button>
+            </div>
+          ) : null;
+        })()}
         <datalist id="payees">{ctx.payees.map((p) => <option key={p.id} value={p.name} />)}</datalist>
         {drafts.map((d) => (
           <div key={d.key} className="stack" style={{ gap: 10, padding: 14, borderRadius: 12, background: d.saved ? "#F1F8F4" : "#F7F6F3", border: "1px solid #E4E2DC" }}>
             <div className="row" style={{ gap: 10 }}>
               <button type="button" className="btn btn-sm" onClick={() => ctx.openDoc(d.docId)}><Icon name="doc" size={14} />表示</button>
               <span className="grow muted" style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.file}</span>
+              {d.reading && <span className="chip st-wait">読み取り中…</span>}
+              {!d.reading && d.method && !d.saved && <span className={"chip " + (d.method === "none" ? "st-err" : "st-auto")} title={d.note}>{METHOD_LABEL[d.method]}</span>}
               {d.saved && <span className="chip st-ok">登録済 {yen(Number(d.amount.replace(/[^\d]/g, "")))}</span>}
             </div>
             {!d.saved && (
@@ -162,7 +197,7 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
 /* ---------- クラウドBoxから取り込む ---------- */
 interface BoxItem { id: string; name: string; size: number; date: string | null; dateKey: string | null; imported: boolean; blocked?: boolean }
 
-function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: "invoice" | "receipt"; onImported: (list: { docId: string; fileName: string }[]) => void; onManual: (file: File, boxId: string) => Promise<number> }) {
+function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: "invoice" | "receipt"; onImported: (list: { docId: string; fileName: string; extracted?: Ex }[]) => void; onManual: (file: File, boxId: string) => Promise<number> }) {
   const t = new Date();
   const [open, setOpen] = useState(false);
   const [from, setFrom] = useState(toISO(new Date(t.getFullYear(), t.getMonth() - 1, 1)));
@@ -172,6 +207,58 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
   const [note, setNote] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"folder" | "range">("folder");
+  const [folder, setFolder] = useState(() => { try { return window.localStorage.getItem("hrd.boxFolder") ?? "経理/月次決算資料/03.支払請求書"; } catch { return "経理/月次決算資料/03.支払請求書"; } });
+  const [includeSub, setIncludeSub] = useState(false);
+  const [diag, setDiag] = useState<{ fields: string[]; folders: string[] } | null>(null);
+  const [progress, setProgress] = useState("");
+
+  async function loadFolder(e?: React.FormEvent) {
+    e?.preventDefault();
+    try { window.localStorage.setItem("hrd.boxFolder", folder); } catch { /* noop */ }
+    setBusy(true); setPicked(new Set()); setNote(""); setDiag(null); setItems(null);
+    const { ok, j } = await call("/api/mf/box/folder", { companyId: ctx.company.id, path: folder, includeSub });
+    setBusy(false);
+    if (!ok) { ctx.toast(j.error ?? "クラウドBoxを読み込めませんでした", true); return; }
+    if (!j.folderSupported) {
+      setDiag({ fields: j.fields ?? [], folders: [] });
+      setNote(`クラウドBox APIの一覧（${j.totalFiles}件）にフォルダの情報が含まれていないため、フォルダで絞り込めませんでした。下の「APIが返した項目」を開発担当に共有してください。当面は「期間で探す」をお使いください。`);
+      return;
+    }
+    const list = (j.items ?? []) as (BoxItem & { folder: string | null; payee: string | null; amount: number | null })[];
+    setItems(list);
+    setPicked(new Set(list.filter((x) => !x.imported).slice(0, 500).map((x) => x.id)));
+    if (!list.length) { setDiag({ fields: [], folders: j.folders ?? [] }); setNote("指定のフォルダにPDF・画像が見つかりませんでした。フォルダ名を確認してください（下に、見つかったフォルダの一覧を表示しています）。"); }
+    else if (j.truncated) setNote("ファイル数が多いため、途中までの一覧です。");
+  }
+
+  async function importAll() {
+    const ids = [...picked];
+    if (!ids.length) return;
+    setBusy(true);
+    let okN = 0, blockedN = 0, ngN = 0; let firstErr = "";
+    for (let i = 0; i < ids.length; i += 10) {
+      const batch = ids.slice(i, i + 10);
+      setProgress(`取り込み中… ${Math.min(i + batch.length, ids.length)} / ${ids.length}件（請求書の内容も読み取っています）`);
+      const { ok, j } = await call("/api/mf/box/import", { companyId: ctx.company.id, fileIds: batch, docType });
+      if (!ok) { firstErr = j.error ?? "取り込めませんでした"; ngN += batch.length; break; }
+      const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean; extracted?: Ex }[];
+      const good = res.filter((r) => r.ok && r.docId).map((r) => ({ docId: r.docId!, fileName: r.fileName ?? "", extracted: r.extracted }));
+      if (good.length) onImported(good);
+      const goodIds = new Set(res.filter((r) => r.ok).map((r) => r.fileId));
+      const blockedIds = new Set(res.filter((r) => r.internal).map((r) => r.fileId));
+      okN += goodIds.size; blockedN += blockedIds.size;
+      const other = res.filter((r) => !r.ok && !r.internal);
+      ngN += other.length; if (!firstErr && other[0]) firstErr = other[0].message ?? "";
+      setItems((cur) => cur?.map((it) => (goodIds.has(it.id) ? { ...it, imported: true } : blockedIds.has(it.id) ? { ...it, blocked: true } : it)) ?? null);
+      setPicked((cur) => { const n = new Set(cur); batch.forEach((b) => n.delete(b)); return n; });
+    }
+    setBusy(false); setProgress("");
+    const parts = [`${okN}件取り込みました`];
+    if (blockedN) parts.push(`${blockedN}件はAPIで取り出せないため、一覧の「Boxで開く」「ファイルを置く」で取り込んでください`);
+    if (ngN) parts.push(`${ngN}件できませんでした：${firstErr}`);
+    ctx.toast(parts.join("。"), blockedN + ngN > 0);
+  }
 
   async function call(path: string, payload: unknown) {
     const { data } = await sb().auth.getSession();
@@ -198,8 +285,8 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
     const { ok, j } = await call("/api/mf/box/import", { companyId: ctx.company.id, fileIds: ids, docType });
     setBusy(false);
     if (!ok) { ctx.toast(j.error ?? "取り込めませんでした", true); return; }
-    const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean }[];
-    const good = res.filter((r) => r.ok && r.docId).map((r) => ({ docId: r.docId!, fileName: r.fileName ?? "" }));
+    const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean; extracted?: Ex }[];
+    const good = res.filter((r) => r.ok && r.docId).map((r) => ({ docId: r.docId!, fileName: r.fileName ?? "", extracted: r.extracted }));
     const bad = res.filter((r) => !r.ok);
     if (good.length) onImported(good);
     const goodIds = new Set(res.filter((r) => r.ok).map((r) => r.fileId));
@@ -211,7 +298,7 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
     else if (bad.length) ctx.toast(`${good.length}件取り込み、${bad.length}件できませんでした：${(other[0] ?? bad[0]).message ?? ""}`, true);
     else ctx.toast(`クラウドBoxから${good.length}件取り込みました。右の「内容の確認」で支払予定に登録してください`);
   }
-  const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else if (n.size < 20) n.add(id); return n; });
+  const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else if (mode === "folder" || n.size < 20) n.add(id); return n; });
   const kb = (n: number) => (n >= 1048576 ? (n / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(n / 1024)) + "KB");
 
   return (
@@ -225,13 +312,37 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
       </div>
       {open && (
         <>
+          <div className="row wrap" style={{ gap: 8 }}>
+            <button type="button" className={"pill" + (mode === "folder" ? " is-on" : "")} aria-pressed={mode === "folder"} onClick={() => { setMode("folder"); setItems(null); setNote(""); setDiag(null); }}>フォルダから一括取込</button>
+            <button type="button" className={"pill" + (mode === "range" ? " is-on" : "")} aria-pressed={mode === "range"} onClick={() => { setMode("range"); setItems(null); setNote(""); setDiag(null); }}>期間で探す</button>
+          </div>
+          {mode === "folder" && (
+            <form className="row wrap" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={loadFolder}>
+              <label className="field" style={{ flex: "1 1 320px" }}><span>クラウドBoxのフォルダ（「/」区切り）</span><input className="inp" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="経理/月次決算資料/03.支払請求書" /></label>
+              <label className="row" style={{ gap: 6, fontSize: 13, height: 44 }}><input type="checkbox" checked={includeSub} onChange={(e) => setIncludeSub(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#2440D8" }} />下の階層のフォルダも含める</label>
+              <button className="btn btn-primary" type="submit" disabled={busy}>{busy && !progress ? "読み込み中…" : "フォルダを読み込む"}</button>
+            </form>
+          )}
+          {mode === "range" && (
           <form className="row wrap" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={search}>
             <label className="field" style={{ width: 170 }}><span>期間（開始）</span><input className="inp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
             <label className="field" style={{ width: 170 }}><span>期間（終了）</span><input className="inp" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
             <label className="field" style={{ flex: "1 1 200px" }}><span>ファイル名のキーワード（任意）</span><input className="inp" value={q} onChange={(e) => setQ(e.target.value)} placeholder="請求、取引先名など" /></label>
             <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? "検索中…" : "検索"}</button>
           </form>
-          {note && <p className="muted" style={{ fontSize: 12, margin: 0 }}>{note}</p>}
+          )}
+          {note && <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>{note}</p>}
+          {diag && diag.folders.length > 0 && (
+            <details><summary style={{ cursor: "pointer", fontSize: 13 }}>見つかったフォルダ（{diag.folders.length}）</summary>
+              <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>{diag.folders.map((f) => <button key={f} type="button" className="pill" onClick={() => setFolder(f)}>{f}</button>)}</div>
+            </details>
+          )}
+          {diag && diag.fields.length > 0 && (
+            <details><summary style={{ cursor: "pointer", fontSize: 13 }}>APIが返した項目（値は含みません）</summary>
+              <pre style={{ fontSize: 11, background: "#F5F4F0", padding: 10, borderRadius: 8, whiteSpace: "pre-wrap", margin: "8px 0 0" }}>{diag.fields.join("\n")}</pre>
+            </details>
+          )}
+          {progress && <span className="chip st-wait" style={{ alignSelf: "flex-start", height: "auto", padding: "6px 10px" }}>{progress}</span>}
           {items && (
             items.length === 0 ? <div className="empty">条件に合うPDF・画像はありませんでした</div> : (
               <>
@@ -242,7 +353,7 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
                       {items.map((it) => (
                         <tr key={it.id}>
                           <td>{!it.imported && <input type="checkbox" aria-label={`${it.name}を選択`} checked={picked.has(it.id)} onChange={() => toggle(it.id)} style={{ width: 18, height: 18, accentColor: "#2440D8" }} />}</td>
-                          <td style={{ fontWeight: 600, wordBreak: "break-all" }}>{it.name}</td>
+                          <td style={{ wordBreak: "break-all" }}><div style={{ fontWeight: 600 }}>{it.name}</div>{(it as BoxItem & { payee?: string | null; amount?: number | null }).payee && <div className="muted" style={{ fontSize: 12 }}>{(it as BoxItem & { payee?: string | null }).payee}{(it as BoxItem & { amount?: number | null }).amount ? ` ・ ${yen((it as BoxItem & { amount?: number | null }).amount!)}` : ""}</div>}</td>
                           <td className="num nw">{it.date ?? "—"}</td>
                           <td className="num r nw">{kb(it.size)}</td>
                           <td className="nw">
@@ -268,8 +379,18 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
                   </table>
                 </div>
                 <div className="row wrap" style={{ gap: 10 }}>
-                  <span className="muted" style={{ fontSize: 13 }}>{picked.size}件選択中（一度に20件まで）</span>
-                  <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={importPicked}>{busy ? "取り込み中…" : "選んだファイルを取り込む"}</button>
+                  {mode === "range" ? (
+                    <>
+                      <span className="muted" style={{ fontSize: 13 }}>{picked.size}件選択中（一度に20件まで）</span>
+                      <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={importPicked}>{busy ? "取り込み中…" : "選んだファイルを取り込む"}</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="muted" style={{ fontSize: 13 }}>{items.length}件中 未取込 {items.filter((x) => !x.imported).length}件 ・ 選択 {picked.size}件</span>
+                      <button type="button" className="btn btn-sm" onClick={() => setPicked(new Set(items.filter((x) => !x.imported && !x.blocked).map((x) => x.id)))}>未取込をすべて選択</button>
+                      <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={importAll}>{busy ? "取り込み中…" : `選んだ${picked.size}件を取り込んで支払情報を読み取る`}</button>
+                    </>
+                  )}
                 </div>
               </>
             )
