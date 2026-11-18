@@ -189,6 +189,8 @@ export function pickArray(j: unknown, keys: string[]): Record<string, unknown>[]
 /* ---------- クラウドBox API（読み取りのみ） ---------- */
 export class BoxScopeMissing extends Error { constructor() { super("クラウドBoxの読み取り権限（mfc/box/files.read）がありません。アプリポータルでこの権限を追加し、設定画面から「連携し直す」を押してください。"); } }
 
+export class BoxInternalFile extends Error { constructor() { super("マネーフォワードの他サービス経由で保存されたファイルのため、APIでは取り出せません（Boxで開いてダウンロードし、この行に置いてください）"); } }
+
 export async function boxRequest(cfg: MfConfig, admin: SupabaseClient, companyId: string, path: string): Promise<Response> {
   const scopes = await grantedScopes(admin, companyId);
   if (scopes.length && !scopes.includes(BOX_READ_SCOPE)) throw new BoxScopeMissing();
@@ -200,6 +202,7 @@ export async function boxRequest(cfg: MfConfig, admin: SupabaseClient, companyId
     if (res.status === 403) {
       const code = await boxErrorCode(res);
       if (code.includes("INSUFFICIENT") || code.includes("SCOPE")) throw new BoxScopeMissing();
+      if (code.includes("INTERNAL_FILE_ACCESS_NOT_ALLOWED")) throw new BoxInternalFile();
       throw new MfApiError(403, code || "アクセスが許可されていません");
     }
     if (res.status === 429 || res.status === 503) {
@@ -235,7 +238,7 @@ export async function boxDownload(cfg: MfConfig, admin: SupabaseClient, companyI
   }
   if (!res.ok) {
     const code = await boxErrorCode(res);
-    if (code.includes("INTERNAL_FILE_ACCESS_NOT_ALLOWED")) throw new Error("このファイルはマネーフォワード内部の連携で保存されたため、APIでは取得できません（Box画面から手動で取り込んでください）");
+    if (code.includes("INTERNAL_FILE_ACCESS_NOT_ALLOWED")) throw new BoxInternalFile();
     throw new MfApiError(res.status, code || "ファイルを取得できませんでした");
   }
   const reader = res.body?.getReader();

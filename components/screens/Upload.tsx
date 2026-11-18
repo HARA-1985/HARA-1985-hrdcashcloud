@@ -38,14 +38,15 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
   });
   const addDrafts = (ds: Draft[]) => setDrafts((cur) => [...ds.filter((d) => !cur.some((c) => c.key === d.key)), ...cur]);
 
-  async function handle(files: File[]) {
-    if (!ctx.canWrite) { ctx.toast("閲覧のみの権限では登録できません", true); return; }
+  async function handle(files: File[], boxFileId?: string): Promise<number> {
+    let okCount = 0;
+    if (!ctx.canWrite) { ctx.toast("閲覧のみの権限では登録できません", true); return 0; }
     const ok = files.filter((f) => {
       if (f.size > MAX) { ctx.toast(`${f.name}：20MBを超えています`, true); return false; }
       if (f.type && !OK_TYPES.includes(f.type)) { ctx.toast(`${f.name}：PDF・画像のみ登録できます`, true); return false; }
       return true;
     });
-    if (!ok.length) return;
+    if (!ok.length) return 0;
     setUploading((n) => n + ok.length);
     await Promise.all(ok.map(async (f) => {
       const path = `${ctx.company.id}/${crypto.randomUUID()}-${f.name.replace(/[^\w.\-]+/g, "_")}`;
@@ -54,12 +55,19 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
       const { data, error } = await sb().from("documents").insert({
         company_id: ctx.company.id, doc_type: isExp ? "receipt" : "invoice", file_name: f.name,
         mime_type: f.type || null, size_bytes: f.size, temp_path: path,
+        ...(boxFileId ? { mf_box_file_id: boxFileId, source: "mf_box", mf_box_status: "stored" } : {}),
       }).select("id").single();
       setUploading((n) => n - 1);
-      if (error || !data) { ctx.toast(`${f.name}：登録に失敗しました（${error?.message}）`, true); return; }
+      if (error || !data) {
+        await sb().storage.from("inbox").remove([path]);
+        ctx.toast(error?.code === "23505" ? `${f.name}：このBoxファイルは取り込み済みです` : `${f.name}：登録に失敗しました（${error?.message}）`, true);
+        return;
+      }
       addDrafts([newDraft(data.id, f.name)]);
+      okCount++;
     }));
     ctx.reload();
+    return okCount;
   }
 
   async function save(d: Draft) {
@@ -84,7 +92,8 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
   return (
     <div className="stack" style={{ gap: 16 }}>
     {ctx.mf?.status === "connected" && ctx.canWrite && (
-      <BoxImport ctx={ctx} docType={isExp ? "receipt" : "invoice"} onImported={(list) => { addDrafts(list.map((x) => newDraft(x.docId, x.fileName))); ctx.reload(); }} />
+      <BoxImport ctx={ctx} docType={isExp ? "receipt" : "invoice"} onImported={(list) => { addDrafts(list.map((x) => newDraft(x.docId, x.fileName))); ctx.reload(); }}
+        onManual={(file, boxId) => handle([file], boxId)} />
     )}
     <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", alignItems: "start" }}>
       <label
@@ -151,9 +160,9 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
 }
 
 /* ---------- クラウドBoxから取り込む ---------- */
-interface BoxItem { id: string; name: string; size: number; date: string | null; dateKey: string | null; imported: boolean }
+interface BoxItem { id: string; name: string; size: number; date: string | null; dateKey: string | null; imported: boolean; blocked?: boolean }
 
-function BoxImport({ ctx, docType, onImported }: { ctx: Ctx; docType: "invoice" | "receipt"; onImported: (list: { docId: string; fileName: string }[]) => void }) {
+function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: "invoice" | "receipt"; onImported: (list: { docId: string; fileName: string }[]) => void; onManual: (file: File, boxId: string) => Promise<number> }) {
   const t = new Date();
   const [open, setOpen] = useState(false);
   const [from, setFrom] = useState(toISO(new Date(t.getFullYear(), t.getMonth() - 1, 1)));
@@ -189,14 +198,17 @@ function BoxImport({ ctx, docType, onImported }: { ctx: Ctx; docType: "invoice" 
     const { ok, j } = await call("/api/mf/box/import", { companyId: ctx.company.id, fileIds: ids, docType });
     setBusy(false);
     if (!ok) { ctx.toast(j.error ?? "取り込めませんでした", true); return; }
-    const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string }[];
+    const res = (j.results ?? []) as { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean }[];
     const good = res.filter((r) => r.ok && r.docId).map((r) => ({ docId: r.docId!, fileName: r.fileName ?? "" }));
     const bad = res.filter((r) => !r.ok);
     if (good.length) onImported(good);
     const goodIds = new Set(res.filter((r) => r.ok).map((r) => r.fileId));
-    setItems((cur) => cur?.map((it) => (goodIds.has(it.id) ? { ...it, imported: true } : it)) ?? null);
+    const blockedIds = new Set(res.filter((r) => r.internal).map((r) => r.fileId));
+    setItems((cur) => cur?.map((it) => (goodIds.has(it.id) ? { ...it, imported: true } : blockedIds.has(it.id) ? { ...it, blocked: true } : it)) ?? null);
     setPicked(new Set());
-    if (bad.length) ctx.toast(`${good.length}件取り込み、${bad.length}件できませんでした：${bad[0].message ?? ""}`, true);
+    const other = bad.filter((r) => !r.internal);
+    if (blockedIds.size && !other.length) ctx.toast(`${good.length}件取り込みました。${blockedIds.size}件はAPIで取り出せないファイルです。一覧の「Boxで開く」からダウンロードし、その行の「ファイルを置く」で取り込んでください`, true);
+    else if (bad.length) ctx.toast(`${good.length}件取り込み、${bad.length}件できませんでした：${(other[0] ?? bad[0]).message ?? ""}`, true);
     else ctx.toast(`クラウドBoxから${good.length}件取り込みました。右の「内容の確認」で支払予定に登録してください`);
   }
   const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else if (n.size < 20) n.add(id); return n; });
@@ -233,7 +245,23 @@ function BoxImport({ ctx, docType, onImported }: { ctx: Ctx; docType: "invoice" 
                           <td style={{ fontWeight: 600, wordBreak: "break-all" }}>{it.name}</td>
                           <td className="num nw">{it.date ?? "—"}</td>
                           <td className="num r nw">{kb(it.size)}</td>
-                          <td>{it.imported && <span className="chip st-ok">取込済</span>}</td>
+                          <td className="nw">
+                            {it.imported && <span className="chip st-ok">取込済</span>}
+                            {!it.imported && it.blocked && (
+                              <div className="row" style={{ gap: 6 }}>
+                                <a className="btn btn-sm" href={`https://box.moneyforward.com/files/${it.id}`} target="_blank" rel="noopener noreferrer">Boxで開く</a>
+                                <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }}>
+                                  ファイルを置く
+                                  <input className="sr" type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.webp" onChange={async (e) => {
+                                    const f = e.target.files?.[0]; e.target.value = "";
+                                    if (!f) return;
+                                    if (!(await onManual(f, it.id))) return;
+                                    setItems((cur) => cur?.map((x) => (x.id === it.id ? { ...x, imported: true } : x)) ?? null);
+                                  }} />
+                                </label>
+                              </div>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -246,7 +274,7 @@ function BoxImport({ ctx, docType, onImported }: { ctx: Ctx; docType: "invoice" 
               </>
             )
           )}
-          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>クラウドBoxは読み取りのみで、Box側のファイルは変更・削除しません。取り込んだ書類は原本がBoxにあるため「保存済」として扱い、二重に取り込まれないようにしています。</p>
+          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>マネーフォワードの他サービス（クラウド会計の証憑添付・証憑自動取得など）から保存されたファイルは、マネーフォワードの仕様によりAPIでは取り出せません。その場合は行に「Boxで開く」「ファイルを置く」が出るので、Boxの画面でダウンロードしたファイルを置いてください（Boxのファイルと紐付けて記録します）。<br />クラウドBoxは読み取りのみで、Box側のファイルは変更・削除しません。取り込んだ書類は原本がBoxにあるため「保存済」として扱い、二重に取り込まれないようにしています。</p>
         </>
       )}
     </section>

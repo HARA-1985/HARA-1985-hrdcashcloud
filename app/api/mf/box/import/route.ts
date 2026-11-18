@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { authorize, json } from "@/lib/server";
-import { BoxScopeMissing, MfApiError, MfNotConnected, boxDownload, boxErrorCode, boxRequest, mfConfig } from "@/lib/mf";
+import { BoxInternalFile, BoxScopeMissing, MfApiError, MfNotConnected, boxDownload, boxErrorCode, boxRequest, mfConfig } from "@/lib/mf";
 
 const MAX_BYTES = 20 * 1024 * 1024; // 一時保管バケットの上限に合わせる
 
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
   if (!ids.length) return json({ error: "取り込むファイルを選んでください" }, 400);
   const docType = body.docType === "receipt" ? "receipt" : "invoice";
 
-  const results: { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string }[] = [];
+  const results: { fileId: string; ok: boolean; docId?: string; fileName?: string; message?: string; internal?: boolean }[] = [];
   for (const fid of ids) {
     try {
       const { data: exists } = await a.admin.from("documents").select("id").eq("company_id", body.companyId).eq("mf_box_file_id", fid).maybeSingle();
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
       if (error || !doc) { await a.admin.storage.from("inbox").remove([path]); throw new Error(error?.message ?? "登録に失敗しました"); }
       results.push({ fileId: fid, ok: true, docId: doc.id, fileName: name });
     } catch (e) {
-      results.push({ fileId: fid, ok: false, message: (e as Error).message.slice(0, 200) });
+      results.push({ fileId: fid, ok: false, message: (e as Error).message.slice(0, 200), internal: e instanceof BoxInternalFile });
       if (e instanceof MfNotConnected || e instanceof BoxScopeMissing) break;
     }
   }
