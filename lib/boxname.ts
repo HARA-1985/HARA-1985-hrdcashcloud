@@ -26,13 +26,14 @@ export function parseBoxName(r: BoxRow, year: number): ParsedPay {
   if (!/\.(pdf|png|jpe?g)$/i.test(raw)) return { ...base, skip: "PDF・画像以外" };
   const name = raw.replace(/\.[^.]+$/, "");
   // 振替日・方法：【1126振替】／【1031振込・源泉あり】／(10.31振込)
-  const m = name.match(/[【(（]\s*(\d{1,2})\.?(\d{2})\s*(振替|振込)[^】)）]*[】)）]/);
+  const m = name.match(/[【(（]\s*(\d{1,2})\.?(\d{2})\s*(?:までに)?\s*(振替|振込)[^】]*?[】)）]/);
   if (!m) return { ...base, skip: "振替日・振込日の記載なし" };
   const mm = Number(m[1]), dd = Number(m[2]);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return { ...base, skip: "日付が読めない" };
   const due = `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
   const method = m[3] as "振替" | "振込";
   if (/送金|小口用/.test(name)) return { ...base, due, method, skip: "口座間の資金移動" };
+  if (/後日.{0,12}カードで引落/.test(name)) return { ...base, due, method, skip: "カード引落に含まれる" };
 
   // 金額：末尾側の括弧内の数字（「1021297円+52800円」は合算）
   let amount: number | null = null;
@@ -48,7 +49,7 @@ export function parseBoxName(r: BoxRow, year: number): ParsedPay {
   // 支払先：】の後ろから、請求書・○月分・日付・括弧の手前まで
   let rest = name.slice((m.index ?? 0) + m[0].length).replace(/^[_\s]+/, "").replace(/^\d{6}_/, "");
   rest = rest.replace(/株式会社リージャー様?/g, "");
-  const stop = rest.search(/(\d{1,2}[-・]?\d{0,2}月分|請求書|ご請求|\d{4}年|\d{8}|保険料納入|に係る|\d{3,}円|[(（_]|\s)/);
+  const stop = rest.search(/(\d{1,2}[-・]?\d{0,2}月分|請求書|支払通知書|ご請求|\d{4}年|\d{8}|保険料納入|に係る|\d{3,}円|[(（_]|\s)/);
   let payee = (stop > 0 ? rest.slice(0, stop) : rest).trim();
   if (!payee) payee = rest.slice(0, 20).trim();
   const item = rest.replace(/\d{8,9}/g, "").replace(/[(（][\d,円+\s]+[)）]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
