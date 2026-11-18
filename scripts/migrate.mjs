@@ -55,4 +55,9 @@ const b = await client.query("select id, public from storage.buckets where id = 
 console.log("[migrate] inbox バケット:", b.rows.length ? (b.rows[0].public ? "公開(要確認)" : "非公開") : "なし");
 const tg = await client.query("select count(*)::int as n from pg_trigger where tgname in ('on_auth_user_created','payments_guard')");
 console.log("[migrate] 統制トリガー:", tg.rows[0].n, "/ 2");
+const v = await client.query("select extversion from pg_extension where extname = 'supabase_vault'");
+const vf = await client.query("select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'vault' and p.proname in ('create_secret','update_secret')");
+console.log("[migrate] Supabase Vault:", v.rows.length ? `有効 v${v.rows[0].extversion}（関数 ${vf.rows[0].n}/2）` : "無効（要対応）");
+const mf = await client.query("select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'mf\\_%'");
+console.log("[migrate] MF連携関数:", mf.rows[0].n, "/ 5");
 await client.end();
