@@ -189,14 +189,17 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
   const [bulkResult, setBulkResult] = useState("");
   const bulkRows = bulkText.split(/\r?\n/).map((l) => l.split("\t")).filter((c) => c.length >= 7 && c[0].trim())
     .map(([name, bank_code, bank_kana, branch_code, branch_kana, account_type, account_number, name_kana]) => ({ name: name.trim(), bank_code, bank_kana, branch_code, branch_kana, account_type, account_number, name_kana }));
+  const [unused, setUnused] = useState<string[] | null>(null);
   async function cleanup() {
     const l = await authedFetch("/api/payees/cleanup", { companyId: ctx.company.id, list: true }) as { ok: boolean; error?: string; names?: string[] };
     if (!l.ok) { ctx.toast(l.error ?? "確認できませんでした", true); return; }
-    if (!l.names?.length) { ctx.toast("整理する支払先はありません"); return; }
-    if (!window.confirm(`支払予定が1件もなく口座も未登録の支払先 ${l.names.length}件を削除します：\n${l.names.join("、")}`)) return;
+    if (!l.names?.length) { ctx.toast("整理する支払先はありません"); setUnused(null); return; }
+    setUnused(l.names);
+  }
+  async function doCleanup() {
     const r = await authedFetch("/api/payees/cleanup", { companyId: ctx.company.id }) as { ok: boolean; error?: string; removed?: string[] };
     if (!r.ok) { ctx.toast(r.error ?? "削除できませんでした", true); return; }
-    ctx.toast(`${r.removed?.length ?? 0}件の支払先を削除しました`); ctx.reload();
+    ctx.toast(`${r.removed?.length ?? 0}件の支払先を削除しました`); setUnused(null); ctx.reload();
   }
   async function saveBulk() {
     setBulkBusy(true);
@@ -216,6 +219,15 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
           {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => setEdit(blank)}>支払先を追加</button>}
         </div>
       </div>
+      {unused && (
+        <div className="stack" style={{ gap: 8, padding: 14, background: "#FFF8F3", border: "1px solid #F0C9AE", borderRadius: 12, fontSize: 13 }}>
+          <span>支払予定が1件もなく、口座も未登録の支払先が {unused.length}件あります：{unused.join("、")}</span>
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" id="payee-cleanup-confirm" className="btn btn-sm btn-primary" onClick={doCleanup}>この{unused.length}件を削除する</button>
+            <button type="button" className="btn btn-sm" onClick={() => setUnused(null)}>やめる</button>
+          </div>
+        </div>
+      )}
       {bulk && (
         <div className="stack" style={{ gap: 10, padding: 14, background: "#F7F6F3", borderRadius: 12 }}>
           <span style={{ fontSize: 13, lineHeight: 1.7 }}>1行に1社、タブ区切りで「支払先名・銀行コード・銀行名カナ・支店コード・支店名カナ・種別（普通/当座）・口座番号・受取人名カナ」を貼り付けます。支払先名が一致する支払先の口座を上書きします（一致しない名前は登録しません）。</span>
