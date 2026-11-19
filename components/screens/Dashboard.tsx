@@ -19,7 +19,7 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
     // 8週
     const start = new Date(today); start.setDate(today.getDate() - ((today.getDay() + 6) % 7));
     const until = new Date(start.getTime() + 56 * 864e5);
-    const proj = projectFixed(all.filter((p) => p.status !== "paid"), until);
+    const proj = projectFixed(all, until).filter((p) => p.status !== "paid");
     const wk = Array.from({ length: 8 }, (_, i) => ({ f: 0, s: 0, st: new Date(start.getTime() + i * 7 * 864e5) }));
     for (const p of proj) {
       const i = Math.floor((p.d.getTime() - start.getTime()) / (7 * 864e5));

@@ -18,21 +18,38 @@ export function viewPayments(ps: Payment[], banks: BankAccount[]): PayView[] {
   }).sort((a, b) => a.d.getTime() - b.d.getTime());
 }
 
-/** 毎月固定の支払を、請求書が届く前から「見込」として先の月に複製する */
+/**
+ * 毎月固定の支払を、請求書が届く前から「見込」として先の月に入れる。
+ * - 支払先ごとに「いちばん新しい月」の明細だけを、その翌月以降へ複製する（過去の月を何重にも複製しない）
+ * - すでに実績（登録済みの支払）がある月には入れない
+ * - 今月より前の月には入れない／直近3か月に実績がない支払先は見込を作らない
+ */
 export function projectFixed(ps: PayView[], until: Date): PayView[] {
   const out = [...ps];
-  const latestByKey = new Map<string, PayView>();
+  const now = new Date();
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const ym = (d: Date) => d.getFullYear() * 12 + d.getMonth();
+  const byPayee = new Map<string, PayView[]>();
   for (const p of ps) {
-    if (p.kind !== "fixed") continue;
-    const key = p.payee_name + "|" + (p.item ?? "");
-    const cur = latestByKey.get(key);
-    if (!cur || cur.d < p.d) latestByKey.set(key, p);
+    if (p.kind !== "fixed" || p.status === "cancelled") continue;
+    const arr = byPayee.get(p.payee_name) ?? [];
+    arr.push(p); byPayee.set(p.payee_name, arr);
   }
-  for (const p of latestByKey.values()) {
+  for (const arr of byPayee.values()) {
+    const months = new Set(arr.map((p) => ym(p.d)));
+    const latest = Math.max(...months);
+    if (latest < ym(thisMonth) - 2) continue; // 3か月以上出てこない支払先は終了したとみなす
+    const lines = arr.filter((p) => ym(p.d) === latest);
     for (let k = 1; k < 24; k++) {
-      const nd = new Date(p.d.getFullYear(), p.d.getMonth() + k, p.d.getDate());
-      if (nd >= until) break;
-      out.push({ ...p, id: p.id + "-e" + k, d: nd, md: md(nd), wd: wd(nd), est: true, status: "pending", document_id: null });
+      const target = latest + k;
+      const ty = Math.floor(target / 12), tm = target % 12;
+      if (new Date(ty, tm, 1) >= until) break;
+      if (new Date(ty, tm, 1) < thisMonth || months.has(target)) continue;
+      for (const p of lines) {
+        const last = new Date(ty, tm + 1, 0).getDate();
+        const nd = new Date(ty, tm, Math.min(p.d.getDate(), last));
+        out.push({ ...p, id: p.id + "-e" + k, d: nd, md: md(nd), wd: wd(nd), est: true, status: "pending", document_id: null });
+      }
     }
   }
   return out.sort((a, b) => a.d.getTime() - b.d.getTime());

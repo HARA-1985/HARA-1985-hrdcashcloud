@@ -7,8 +7,10 @@ import { STATUS_CLS, STATUS_LABEL } from "@/lib/types";
 
 export default function Monthly({ ctx }: { ctx: Ctx }) {
   const [sel, setSel] = useState(0);
+  const [offset, setOffset] = useState(0); // 表示開始月（今月からの月数）
   const now = new Date();
-  const months = useMemo(() => Array.from({ length: 6 }, (_, i) => new Date(now.getFullYear(), now.getMonth() + i, 1)), [now.getFullYear(), now.getMonth()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const months = useMemo(() => Array.from({ length: 6 }, (_, i) => new Date(now.getFullYear(), now.getMonth() + offset + i, 1)), [now.getFullYear(), now.getMonth(), offset]); // eslint-disable-line react-hooks/exhaustive-deps
+  const move = (n: number) => { setOffset((o) => o + n); setSel(0); };
 
   const v = useMemo(() => {
     const until = new Date(months[5].getFullYear(), months[5].getMonth() + 1, 1);
@@ -49,7 +51,12 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
   return (
     <div className="stack" style={{ gap: 20 }}>
       <div className="row wrap" style={{ gap: 14 }}>
-        <span className="muted" style={{ fontSize: 13 }}>{ymLabel(months[0])}〜{ymLabel(months[5])}（6か月）／ 毎月固定の支払は、請求書が届く前から「見込」として自動で入ります</span>
+        <div className="row" style={{ gap: 6 }}>
+          <button type="button" className="btn btn-sm" onClick={() => move(-6)} aria-label="前の6か月">‹ 前の6か月</button>
+          {offset !== 0 && <button type="button" className="btn btn-sm" onClick={() => { setOffset(0); setSel(0); }}>今月から</button>}
+          <button type="button" className="btn btn-sm" onClick={() => move(6)} aria-label="次の6か月">次の6か月 ›</button>
+        </div>
+        <span className="muted" style={{ fontSize: 13 }}>{ymLabel(months[0])}〜{ymLabel(months[5])}（6か月）／ 毎月固定の支払は、請求書が届く前から「見込」として先の月に入ります（支払先ごとに直近月の内容）</span>
       </div>
       <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
         {v.cards.map((c, i) => (
