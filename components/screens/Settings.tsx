@@ -14,7 +14,7 @@ async function authedFetch(path: string, body: unknown) {
   const { data } = await sb().auth.getSession();
   const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` }, body: JSON.stringify(body) });
   const j = await res.json().catch(() => ({}));
-  return { ok: res.ok, ...j } as { ok: boolean; error?: string; url?: string };
+  return { ok: res.ok, ...j } as { ok: boolean; error?: string; url?: string; updated?: number; unmatched?: string[]; invalid?: string[] };
 }
 
 export default function Settings({ ctx }: { ctx: Ctx }) {
@@ -183,12 +183,41 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
     ctx.toast("支払先を保存しました"); setEdit(null); ctx.reload();
   }
   const unlinked = [...new Set(ctx.payments.filter((p) => !p.payee_id && p.source !== "card").map((p) => p.payee_name))];
+  const [bulk, setBulk] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResult, setBulkResult] = useState("");
+  const bulkRows = bulkText.split(/\r?\n/).map((l) => l.split("\t")).filter((c) => c.length >= 7 && c[0].trim())
+    .map(([name, bank_code, bank_kana, branch_code, branch_kana, account_type, account_number, name_kana]) => ({ name: name.trim(), bank_code, bank_kana, branch_code, branch_kana, account_type, account_number, name_kana }));
+  async function saveBulk() {
+    setBulkBusy(true);
+    const r = await authedFetch("/api/payees/import", { companyId: ctx.company.id, rows: bulkRows });
+    setBulkBusy(false);
+    if (!r.ok) { ctx.toast(r.error ?? "登録できませんでした", true); return; }
+    const msg = `${r.updated}件の口座を登録しました` + (r.unmatched?.length ? `。支払先が見つからない：${r.unmatched.join("、")}` : "") + (r.invalid?.length ? `。形式エラー：${r.invalid.join("、")}` : "");
+    setBulkResult(msg); ctx.toast(`${r.updated}件の口座を登録しました`); setBulkText(""); ctx.reload();
+  }
   return (
     <section className="card pad stack" style={{ gap: 12 }}>
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
         <h2 className="h2">支払先（振込先口座）</h2>
-        {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => setEdit(blank)}>支払先を追加</button>}
+        <div className="row" style={{ gap: 8 }}>
+          {ctx.canApprove && <button type="button" className="btn btn-sm" onClick={() => setBulk((v) => !v)} aria-expanded={bulk}>口座をまとめて登録</button>}
+          {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => setEdit(blank)}>支払先を追加</button>}
+        </div>
       </div>
+      {bulk && (
+        <div className="stack" style={{ gap: 10, padding: 14, background: "#F7F6F3", borderRadius: 12 }}>
+          <span style={{ fontSize: 13, lineHeight: 1.7 }}>1行に1社、タブ区切りで「支払先名・銀行コード・銀行名カナ・支店コード・支店名カナ・種別（普通/当座）・口座番号・受取人名カナ」を貼り付けます。支払先名が一致する支払先の口座を上書きします（一致しない名前は登録しません）。</span>
+          <label htmlFor="payee-bulk" className="sr">口座の一覧</label>
+          <textarea id="payee-bulk" className="inp" style={{ minHeight: 120, fontSize: 12, fontFamily: "ui-monospace, monospace" }} value={bulkText} onChange={(e) => setBulkText(e.target.value)} placeholder={"ストローハット\t1341\tｾｲﾌﾞｼﾝｷﾝ\t001\tﾎﾝﾃﾝ\t普通\t2032451\tｶ)ｽﾄﾛｰﾊﾂﾄ"} />
+          <div className="row wrap" style={{ gap: 10 }}>
+            <span className="muted" style={{ fontSize: 13 }}>{bulkRows.length}件</span>
+            <button type="button" id="payee-bulk-save" className="btn btn-primary" disabled={!bulkRows.length || bulkBusy} onClick={saveBulk}>{bulkBusy ? "登録中…" : `${bulkRows.length}件の口座を登録`}</button>
+          </div>
+          {bulkResult && <p style={{ fontSize: 13, margin: 0, lineHeight: 1.7 }}>{bulkResult}</p>}
+        </div>
+      )}
       {unlinked.length > 0 && ctx.canWrite && (
         <div className="row wrap" style={{ gap: 8, fontSize: 13 }}>
           <span className="muted">口座が未登録：</span>
