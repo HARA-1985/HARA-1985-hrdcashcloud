@@ -189,6 +189,15 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
   const [bulkResult, setBulkResult] = useState("");
   const bulkRows = bulkText.split(/\r?\n/).map((l) => l.split("\t")).filter((c) => c.length >= 7 && c[0].trim())
     .map(([name, bank_code, bank_kana, branch_code, branch_kana, account_type, account_number, name_kana]) => ({ name: name.trim(), bank_code, bank_kana, branch_code, branch_kana, account_type, account_number, name_kana }));
+  async function cleanup() {
+    const l = await authedFetch("/api/payees/cleanup", { companyId: ctx.company.id, list: true }) as { ok: boolean; error?: string; names?: string[] };
+    if (!l.ok) { ctx.toast(l.error ?? "確認できませんでした", true); return; }
+    if (!l.names?.length) { ctx.toast("整理する支払先はありません"); return; }
+    if (!window.confirm(`支払予定が1件もなく口座も未登録の支払先 ${l.names.length}件を削除します：\n${l.names.join("、")}`)) return;
+    const r = await authedFetch("/api/payees/cleanup", { companyId: ctx.company.id }) as { ok: boolean; error?: string; removed?: string[] };
+    if (!r.ok) { ctx.toast(r.error ?? "削除できませんでした", true); return; }
+    ctx.toast(`${r.removed?.length ?? 0}件の支払先を削除しました`); ctx.reload();
+  }
   async function saveBulk() {
     setBulkBusy(true);
     const r = await authedFetch("/api/payees/import", { companyId: ctx.company.id, rows: bulkRows });
@@ -202,6 +211,7 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
         <h2 className="h2">支払先（振込先口座）</h2>
         <div className="row" style={{ gap: 8 }}>
+          {ctx.canApprove && <button type="button" className="btn btn-sm" onClick={cleanup}>使われていない支払先を整理</button>}
           {ctx.canApprove && <button type="button" className="btn btn-sm" onClick={() => setBulk((v) => !v)} aria-expanded={bulk}>口座をまとめて登録</button>}
           {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => setEdit(blank)}>支払先を追加</button>}
         </div>

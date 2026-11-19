@@ -121,6 +121,7 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
         onManual={(file, boxId) => handle([file], boxId)} />
     )}
     {!isExp && ctx.canWrite && <BoxListImport ctx={ctx} />}
+    {!isExp && ctx.canWrite && <ManualListImport ctx={ctx} />}
     <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", alignItems: "start" }}>
       <label
         className={"drop" + (over ? " is-over" : "")}
@@ -516,6 +517,50 @@ function BoxListImport({ ctx }: { ctx: Ctx }) {
               </div>
               <button type="button" id="boxlist-register" className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy || ok.length === 0} onClick={register}>{busy ? "登録中…" : `${ok.length}件を支払予定に登録`}</button>
             </>
+          )}
+          {result && <p style={{ fontSize: 13, margin: 0 }}>{result}</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ---------- 請求書のない支払（口座引落・税金・社会保険・返済・給与など）をまとめて登録 ---------- */
+function ManualListImport({ ctx }: { ctx: Ctx }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState("");
+  const rows = text.split(/\r?\n/).map((l) => l.split("\t")).filter((c) => c.length >= 4 && c[0].trim())
+    .map(([date, payee, item, amount, kind, method]) => ({ date: date.trim(), payee: payee.trim(), item: (item ?? "").trim(), amount: Number(String(amount).replace(/[^\d]/g, "")), kind, method }));
+  const total = rows.reduce((a, r) => a + (r.amount || 0), 0);
+  async function register() {
+    setBusy(true); setResult("");
+    const { ok, j } = await authedPost("/api/import/payments", { companyId: ctx.company.id, rows });
+    setBusy(false);
+    if (!ok) { ctx.toast(j.error ?? "登録できませんでした", true); return; }
+    const msg = `${j.added}件を登録しました（登録済み ${j.already}件${j.invalid?.length ? `・形式エラー ${j.invalid.length}件` : ""}）`;
+    setResult(msg); ctx.toast(msg); setText(""); ctx.reload();
+  }
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <div className="row wrap" style={{ gap: 10, justifyContent: "space-between" }}>
+        <div className="row" style={{ gap: 10 }}>
+          <Icon name="schedule" size={20} color="#2440D8" />
+          <h2 className="h2">請求書のない支払をまとめて登録</h2>
+        </div>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? "閉じる" : "開く"}</button>
+      </div>
+      {open && (
+        <>
+          <p className="muted" style={{ fontSize: 13, margin: 0, lineHeight: 1.7 }}>口座引落・税金・社会保険料・借入返済・給与など、請求書のない支払を登録します。1行に「日付・支払先・内容・金額・区分（固定/臨時）・方法（引落/振込）」をタブ区切りで貼り付けてください。同じ日付・支払先・金額のものは二重に登録されません。</p>
+          <label htmlFor="manuallist" className="sr">支払の一覧</label>
+          <textarea id="manuallist" className="inp" style={{ minHeight: 120, fontSize: 12, fontFamily: "ui-monospace, monospace" }} value={text} onChange={(e) => setText(e.target.value)} placeholder={"2026-10-15\t日本政策金融公庫\t借入返済\t452287\t固定\t引落"} />
+          {rows.length > 0 && (
+            <div className="row wrap" style={{ gap: 12 }}>
+              <strong style={{ fontSize: 13 }}>{rows.length}件・<span className="num">{yen(total)}</span></strong>
+              <button type="button" id="manuallist-register" className="btn btn-primary" disabled={busy} onClick={register}>{busy ? "登録中…" : `${rows.length}件を支払予定に登録`}</button>
+            </div>
           )}
           {result && <p style={{ fontSize: 13, margin: 0 }}>{result}</p>}
         </>
