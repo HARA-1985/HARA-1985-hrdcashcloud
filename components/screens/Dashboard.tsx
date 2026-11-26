@@ -192,7 +192,7 @@ function CfPanel({ ctx }: { ctx: Ctx }) {
         </div>
       </div>
       <div className="row" style={{ height: 12, borderRadius: 999, overflow: "hidden", background: "#F5F4F0" }} role="img" aria-label="区分別の構成比">
-        {v.secs.map((s) => s.v > 0 && <div key={s.key} title={`${s.label} ${yen(s.v)}`} style={{ width: pct(s.v, v.total), background: s.color }} />)}
+        {v.secs.map((s) => s.v > 0 && <div key={s.key} title={`${s.label} ${yen(s.v)}`} style={{ width: pct(s.v, v.total), height: "100%", background: s.color }} />)}
       </div>
       <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         {v.secs.map((s) => (
