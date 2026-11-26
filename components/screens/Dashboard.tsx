@@ -6,6 +6,7 @@ import { CF_SECTIONS, cfItemOf, cfSectionOf, payeeCfMap, projectFixed, viewPayme
 import Icon from "../Icon";
 
 export default function Dashboard({ ctx }: { ctx: Ctx }) {
+  const [pm, setPm] = useState(0); // 相手先別：0=今月 1=来月
   const v = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const all = viewPayments(ctx.payments, ctx.banks);
@@ -35,10 +36,13 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
       return [...m.entries()].sort((a, b) => b[1] - a[1]);
     };
     const banks = group(thisM, (p) => p.bankName);
-    const payees = group(all.filter((p) => p.d >= today), (p) => p.payee_name).slice(0, 5);
+    const pmStart = new Date(today.getFullYear(), today.getMonth() + pm, 1);
+    const pmAll = projectFixed(all, new Date(today.getFullYear(), today.getMonth() + pm + 1, 0)).filter((p) => sameMonth(p.d, pmStart));
+    const pmTotal = sum(pmAll, (p) => p.amount);
+    const payees = group(pmAll, (p) => p.payee_name).slice(0, 5);
     const upcoming = all.filter((p) => p.d >= today && p.status !== "paid").slice(0, 6);
-    return { today, tot, fx, sp: tot - fx, count: thisM.length, next: Math.max(nextTot, sum(nextM, (p) => p.amount)), soon, wait, wk, mx, banks, payees, upcoming };
-  }, [ctx.payments, ctx.banks]);
+    return { today, tot, fx, sp: tot - fx, count: thisM.length, next: Math.max(nextTot, sum(nextM, (p) => p.amount)), soon, wait, wk, mx, banks, payees, pmTotal, pmStart, upcoming };
+  }, [ctx.payments, ctx.banks, pm]);
 
   if (ctx.loading && ctx.payments.length === 0) return <div className="skeleton" style={{ height: 420 }} />;
 
@@ -123,11 +127,18 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
         </section>
 
         <section className="card pad stack" style={{ gap: 12 }}>
-          <h2 className="h2">相手先別 上位5社（今後）</h2>
+          <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
+            <h2 className="h2">相手先別 上位5社（{v.pmStart.getMonth() + 1}月）</h2>
+            <div className="row" style={{ gap: 4 }} role="group" aria-label="対象月">
+              {["今月", "来月（見込）"].map((l, i) => <button key={l} type="button" className={"btn btn-sm" + (pm === i ? " btn-primary" : "")} aria-pressed={pm === i} onClick={() => setPm(i)}>{l}</button>)}
+            </div>
+          </div>
+          {v.payees.length === 0 && <span className="muted" style={{ fontSize: 13 }}>この月の支払はありません</span>}
           {v.payees.map(([name, amt], i) => (
             <div key={name} className="row" style={{ gap: 12, fontSize: 13, padding: "6px 0", borderBottom: "1px solid #EFEDE8" }}>
               <span className="num muted" style={{ width: 22, fontWeight: 600 }}>{i + 1}</span>
               <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+              <span className="num muted" style={{ fontSize: 11 }}>{pct(amt, v.pmTotal)}</span>
               <span className="num" style={{ fontWeight: 600 }}>{yen(amt)}</span>
             </div>
           ))}

@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { Ctx } from "../ctx";
 import { sb } from "@/lib/supabase";
 import { toZenginKana } from "@/lib/zengin";
@@ -207,6 +207,27 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
     const seen = [i.bank_name, i.branch_name, i.account_number && `${i.account_type === "2" ? "当座" : "普通"} ${i.account_number}`].filter(Boolean).join(" ／ ");
     setReadNote(`${f.name} から読み取り：${seen || "口座情報なし"}${exist ? `（既存の支払先「${exist.name}」を更新します）` : ""}${i.note ? `。${i.note}` : ""}。内容を確認して「保存」してください`);
   }
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => { if (edit) setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 30); }, [edit?.id, !!edit]); // eslint-disable-line react-hooks/exhaustive-deps
+  const editForm = edit && (
+        <form ref={formRef} className="stack" style={{ gap: 12, padding: 14, background: "#F7F6F3", borderRadius: 12 }} onSubmit={save}>
+          {readNote && <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, color: "#2236B8" }}>{readNote}</p>}
+          <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+            <label className="field"><span>支払先名</span><input className="inp" required value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></label>
+            <label className="field"><span>受取人名カナ</span><input className="inp" value={edit.name_kana ?? ""} onChange={(e) => setEdit({ ...edit, name_kana: e.target.value })} placeholder="ｻﾝﾌﾟﾙ(ｶ" /></label>
+            <label className="field"><span>銀行コード</span><input className="inp num" maxLength={4} value={edit.bank_code ?? ""} onChange={(e) => setEdit({ ...edit, bank_code: e.target.value })} /></label>
+            <label className="field"><span>銀行名カナ</span><input className="inp" value={edit.bank_kana ?? ""} onChange={(e) => setEdit({ ...edit, bank_kana: e.target.value })} /></label>
+            <label className="field"><span>支店コード</span><input className="inp num" maxLength={3} value={edit.branch_code ?? ""} onChange={(e) => setEdit({ ...edit, branch_code: e.target.value })} /></label>
+            <label className="field"><span>支店名カナ</span><input className="inp" value={edit.branch_kana ?? ""} onChange={(e) => setEdit({ ...edit, branch_kana: e.target.value })} /></label>
+            <label className="field"><span>預金種目</span><select className="inp" value={edit.account_type ?? "1"} onChange={(e) => setEdit({ ...edit, account_type: e.target.value })}><option value="1">普通</option><option value="2">当座</option><option value="4">貯蓄</option></select></label>
+            <label className="field"><span>口座番号</span><input className="inp num" maxLength={7} value={edit.account_number ?? ""} onChange={(e) => setEdit({ ...edit, account_number: e.target.value })} /></label>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn btn-primary" type="submit">保存</button>
+            <button className="btn" type="button" onClick={() => setEdit(null)}>キャンセル</button>
+          </div>
+        </form>
+  );
   const unlinked = [...new Set(ctx.payments.filter((p) => !p.payee_id && p.source !== "card").map((p) => p.payee_name))];
   const [bulk, setBulk] = useState(false);
   const [bulkText, setBulkText] = useState("");
@@ -272,6 +293,7 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
           {bulkResult && <p style={{ fontSize: 13, margin: 0, lineHeight: 1.7 }}>{bulkResult}</p>}
         </div>
       )}
+      {edit && !edit.id && editForm}
       {unlinked.length > 0 && ctx.canWrite && (
         <div className="row wrap" style={{ gap: 8, fontSize: 13 }}>
           <span className="muted">口座が未登録：</span>
@@ -283,28 +305,9 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
           <strong className="grow" style={{ flex: "1 1 200px" }}>{p.name}</strong>
           <span className="muted num">{p.name_kana ?? ""}</span>
           <span className="muted num">{p.bank_code ? `${p.bank_code}-${p.branch_code ?? "?"} ${p.account_type === "2" ? "当座" : "普通"} ***${(p.account_number ?? "").slice(-4)}` : "口座未登録"}</span>
-          {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => setEdit(p)}>編集</button>}
+          {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => { setReadNote(""); setEdit(edit?.id === p.id ? null : p); }}>{edit?.id === p.id ? "閉じる" : "編集"}</button>}
         </div>
-      ))}
-      {edit && (
-        <form className="stack" style={{ gap: 12, padding: 14, background: "#F7F6F3", borderRadius: 12 }} onSubmit={save}>
-          {readNote && <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, color: "#2236B8" }}>{readNote}</p>}
-          <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
-            <label className="field"><span>支払先名</span><input className="inp" required value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></label>
-            <label className="field"><span>受取人名カナ</span><input className="inp" value={edit.name_kana ?? ""} onChange={(e) => setEdit({ ...edit, name_kana: e.target.value })} placeholder="ｻﾝﾌﾟﾙ(ｶ" /></label>
-            <label className="field"><span>銀行コード</span><input className="inp num" maxLength={4} value={edit.bank_code ?? ""} onChange={(e) => setEdit({ ...edit, bank_code: e.target.value })} /></label>
-            <label className="field"><span>銀行名カナ</span><input className="inp" value={edit.bank_kana ?? ""} onChange={(e) => setEdit({ ...edit, bank_kana: e.target.value })} /></label>
-            <label className="field"><span>支店コード</span><input className="inp num" maxLength={3} value={edit.branch_code ?? ""} onChange={(e) => setEdit({ ...edit, branch_code: e.target.value })} /></label>
-            <label className="field"><span>支店名カナ</span><input className="inp" value={edit.branch_kana ?? ""} onChange={(e) => setEdit({ ...edit, branch_kana: e.target.value })} /></label>
-            <label className="field"><span>預金種目</span><select className="inp" value={edit.account_type ?? "1"} onChange={(e) => setEdit({ ...edit, account_type: e.target.value })}><option value="1">普通</option><option value="2">当座</option><option value="4">貯蓄</option></select></label>
-            <label className="field"><span>口座番号</span><input className="inp num" maxLength={7} value={edit.account_number ?? ""} onChange={(e) => setEdit({ ...edit, account_number: e.target.value })} /></label>
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <button className="btn btn-primary" type="submit">保存</button>
-            <button className="btn" type="button" onClick={() => setEdit(null)}>キャンセル</button>
-          </div>
-        </form>
-      )}
+      )).flatMap((row, i) => (edit && edit.id && edit.id === ctx.payees[i].id ? [row, <Fragment key="edit">{editForm}</Fragment>] : [row]))}
     </section>
   );
 }
