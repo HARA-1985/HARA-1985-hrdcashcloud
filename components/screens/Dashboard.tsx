@@ -1,8 +1,8 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Ctx } from "../ctx";
 import { md, pct, sameMonth, sum, yen } from "@/lib/format";
-import { projectFixed, viewPayments } from "@/lib/view";
+import { CF_SECTIONS, cfItemOf, cfSectionOf, payeeCfMap, projectFixed, viewPayments } from "@/lib/view";
 import Icon from "../Icon";
 
 export default function Dashboard({ ctx }: { ctx: Ctx }) {
@@ -86,6 +86,8 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
         </div>
       </div>
 
+      <CfPanel ctx={ctx} />
+
       <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
         <section className="card pad stack" style={{ gap: 18, gridColumn: "1 / -1", minWidth: 0 }}>
           <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
@@ -153,5 +155,65 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
         </section>
       </div>
     </div>
+  );
+}
+
+/** 支出をキャッシュフロー計算書の区分（営業・投資・財務）で見る */
+function CfPanel({ ctx }: { ctx: Ctx }) {
+  const [mi, setMi] = useState(0);
+  const today = new Date();
+  const months = [0, 1, 2].map((i) => new Date(today.getFullYear(), today.getMonth() + i, 1));
+  const v = useMemo(() => {
+    const all = viewPayments(ctx.payments, ctx.banks);
+    const cfMap = payeeCfMap(ctx.payments);
+    const proj = projectFixed(all, new Date(today.getFullYear(), today.getMonth() + 3, 0));
+    const xs = proj.filter((p) => sameMonth(p.d, months[mi]));
+    const total = sum(xs, (p) => p.amount);
+    const secs = CF_SECTIONS.map((sec) => {
+      const mine = xs.filter((p) => cfSectionOf(cfItemOf(p, cfMap)) === sec.key);
+      const items = sec.items.map((it) => ({ it, v: sum(mine.filter((p) => cfItemOf(p, cfMap) === it), (p) => p.amount) })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
+      return { ...sec, v: sum(mine, (p) => p.amount), n: mine.length, items };
+    });
+    const est = sum(xs.filter((p) => p.est), (p) => p.amount);
+    return { total, secs, est };
+  }, [ctx.payments, ctx.banks, mi]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <section className="card pad stack" style={{ gap: 16 }}>
+      <div className="row wrap" style={{ justifyContent: "space-between", gap: 10 }}>
+        <div className="stack" style={{ gap: 2 }}>
+          <h2 className="h2">キャッシュフロー区分別の支出</h2>
+          <span className="muted" style={{ fontSize: 12 }}>支払予定を 営業・投資・財務 の支出項目で集計（入金は含みません）{v.est > 0 && ` ／ うち見込 ${yen(v.est)}`}</span>
+        </div>
+        <div className="row" style={{ gap: 4 }} role="group" aria-label="対象月">
+          {months.map((m, i) => (
+            <button key={i} type="button" className={"btn btn-sm" + (mi === i ? " btn-primary" : "")} aria-pressed={mi === i} onClick={() => setMi(i)}>{m.getMonth() + 1}月{i > 0 ? "（見込）" : ""}</button>
+          ))}
+        </div>
+      </div>
+      <div className="row" style={{ height: 12, borderRadius: 999, overflow: "hidden", background: "#F5F4F0" }} role="img" aria-label="区分別の構成比">
+        {v.secs.map((s) => s.v > 0 && <div key={s.key} title={`${s.label} ${yen(s.v)}`} style={{ width: pct(s.v, v.total), background: s.color }} />)}
+      </div>
+      <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        {v.secs.map((s) => (
+          <div key={s.key} className="stack" style={{ gap: 8, padding: 16, borderRadius: 12, background: "#FAFAF8", border: "1px solid #EFEDE8", minWidth: 0 }}>
+            <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+              <span className="row" style={{ gap: 6, fontSize: 13, fontWeight: 700 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: s.color, display: "inline-block" }} />{s.label}の支出</span>
+              <span className="muted num" style={{ fontSize: 12 }}>{pct(s.v, v.total)}</span>
+            </div>
+            <span className="num" style={{ fontSize: 22, fontWeight: 700, color: s.v ? "#17191E" : "#9A9EA8" }}>{yen(s.v)}</span>
+            <div className="stack" style={{ gap: 4 }}>
+              {s.items.length === 0 && <span className="muted" style={{ fontSize: 12 }}>該当なし</span>}
+              {s.items.slice(0, 5).map((x) => (
+                <div key={x.it} className="row" style={{ justifyContent: "space-between", gap: 8, fontSize: 12 }}>
+                  <span style={{ color: "#4A4E57" }}>{x.it}</span><span className="num">{yen(x.v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {ctx.canWrite && <button type="button" className="btn btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => ctx.go("invoice")}>支出項目を変更する（請求書画面）→</button>}
+    </section>
   );
 }

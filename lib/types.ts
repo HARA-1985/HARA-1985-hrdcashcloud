@@ -29,7 +29,7 @@ export interface Doc {
 
 export interface Payment {
   id: string; company_id: string; due_date: string; payee_id: string | null; payee_name: string; item: string | null;
-  amount: number; kind: Kind; source: Source; bank_account_id: string | null; account_title: string;
+  amount: number; kind: Kind; source: Source; bank_account_id: string | null; account_title: string; cf_item?: string | null;
   status: PayStatus; document_id: string | null; approved_at: string | null; created_at: string;
   mf_sync_status?: "none" | "syncing" | "done" | "error"; mf_sync_error?: string | null; mf_journal_id?: string | null;
 }

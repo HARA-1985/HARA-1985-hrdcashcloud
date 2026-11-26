@@ -76,3 +76,47 @@ export function catOf(p: Pick<Payment, "payee_name" | "item" | "account_title">)
   if (/^\s*振込\s*$/.test(p.item ?? "") && /^[ァ-ヶー\s　]+$/.test(p.payee_name ?? "")) return "etc"; // 目的不明の個人宛振込
   return "exp";
 }
+
+/** 支出項目（キャッシュフロー計算書の区分） */
+export const CF_SECTIONS = [
+  { key: "op", label: "営業CF", color: "#2440D8", items: ["仕入支払", "経費支払", "人件費", "税金・社会保険", "利息支払", "その他営業支出"] },
+  { key: "inv", label: "投資CF", color: "#1F9D6B", items: ["設備投資（有形固定資産）", "ソフトウェア・無形資産", "敷金・保証金", "出資・投資有価証券", "貸付金"] },
+  { key: "fin", label: "財務CF", color: "#8A5CD6", items: ["借入金返済", "リース債務返済", "配当金支払", "自己株式取得"] },
+] as const;
+export type CfKey = (typeof CF_SECTIONS)[number]["key"];
+export const CF_ITEMS: string[] = CF_SECTIONS.flatMap((s) => [...s.items]);
+
+/** 支払の内容から支出項目を推定する（画面で選んだものがあればそれを優先） */
+export function guessCfItem(p: Pick<Payment, "payee_name" | "item" | "account_title">): string {
+  const t = `${p.payee_name ?? ""} ${p.item ?? ""}`;
+  if (/利息/.test(t)) return "利息支払";
+  if (/返済|金融公庫|借入/.test(t)) return "借入金返済";
+  if (/リース/.test(t)) return "リース債務返済";
+  if (/配当/.test(t)) return "配当金支払";
+  if (/敷金|保証金/.test(t)) return "敷金・保証金";
+  switch (catOf(p)) {
+    case "ap": return "仕入支払";
+    case "pay": return "人件費";
+    case "tax": return "税金・社会保険";
+    default: return "経費支払";
+  }
+}
+
+/**
+ * 支出項目を決める：① その支払で選んだ項目 → ② 同じ支払先で最後に選んだ項目 → ③ 内容から推定
+ * byPayee は payeeCfMap() で作る
+ */
+export function cfItemOf(p: Pick<Payment, "payee_name" | "item" | "account_title" | "cf_item">, byPayee?: Map<string, string>): string {
+  return (p.cf_item && CF_ITEMS.includes(p.cf_item) ? p.cf_item : null) ?? byPayee?.get(p.payee_name) ?? guessCfItem(p);
+}
+export function payeeCfMap(ps: Pick<Payment, "payee_name" | "cf_item" | "due_date">[]): Map<string, string> {
+  const m = new Map<string, { v: string; d: string }>();
+  for (const p of ps) if (p.cf_item && CF_ITEMS.includes(p.cf_item)) {
+    const cur = m.get(p.payee_name);
+    if (!cur || p.due_date > cur.d) m.set(p.payee_name, { v: p.cf_item, d: p.due_date });
+  }
+  return new Map([...m].map(([k, x]) => [k, x.v]));
+}
+export function cfSectionOf(item: string): CfKey {
+  return CF_SECTIONS.find((s) => (s.items as readonly string[]).includes(item))?.key ?? "op";
+}

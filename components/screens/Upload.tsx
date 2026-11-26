@@ -6,6 +6,7 @@ import { parseDate, toISO, yen } from "@/lib/format";
 import { ACCOUNT_TITLES, type Kind } from "@/lib/types";
 import Icon from "../Icon";
 import { parseBoxName, parseRows } from "@/lib/boxname";
+import { CF_SECTIONS, cfItemOf, cfSectionOf, payeeCfMap } from "@/lib/view";
 
 interface Draft {
   key: string; docId: string; file: string;
@@ -570,80 +571,104 @@ function ManualListImport({ ctx }: { ctx: Ctx }) {
   );
 }
 
-/** 取り込み済みの請求書（PDF）について、支払先ごとに 買掛金／未払金 を切り替える */
+/** 支払先ごとに 勘定科目（買掛金／未払金）と 支出項目（営業・投資・財務CF）を切り替える */
 function AccountTitleEditor({ ctx }: { ctx: Ctx }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [pdfOnly, setPdfOnly] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const cfMap = useMemo(() => payeeCfMap(ctx.payments), [ctx.payments]);
   const groups = useMemo(() => {
     const m = new Map<string, { name: string; ps: typeof ctx.payments }>();
     for (const p of ctx.payments) {
-      if (!p.document_id || p.status === "cancelled") continue;
+      if (p.status === "cancelled" || p.source === "card") continue;
+      if (pdfOnly && !p.document_id) continue;
       const g = m.get(p.payee_name) ?? { name: p.payee_name, ps: [] };
       g.ps.push(p); m.set(p.payee_name, g);
     }
     return [...m.values()].map((g) => {
       const titles = [...new Set(g.ps.map((p) => p.account_title))];
-      return { ...g, titles, total: g.ps.reduce((a, p) => a + p.amount, 0) };
+      const cfs = [...new Set(g.ps.map((p) => cfItemOf(p, cfMap)))];
+      return { ...g, titles, cfs, pdf: g.ps.filter((p) => p.document_id).length, total: g.ps.reduce((a, p) => a + p.amount, 0) };
     }).filter((g) => !q || g.name.includes(q)).sort((a, b) => b.total - a.total);
-  }, [ctx.payments, q]);
+  }, [ctx.payments, q, pdfOnly, cfMap]);
   const nAp = groups.filter((g) => g.titles.length === 1 && g.titles[0] === "買掛金").length;
+  const nNonOp = groups.filter((g) => g.cfs.some((c) => cfSectionOf(c) !== "op")).length;
 
-  async function apply(ids: string[], title: string, key: string) {
+  async function apply(ids: string[], patch: { account_title?: string; cf_item?: string }, key: string, label: string) {
     setBusy(key);
-    const docIds = [...new Set(ctx.payments.filter((p) => ids.includes(p.id) && p.document_id).map((p) => p.document_id!))];
-    const r1 = await sb().from("payments").update({ account_title: title }).in("id", ids);
-    const r2 = docIds.length ? await sb().from("documents").update({ account_title: title }).in("id", docIds) : { error: null };
+    const r1 = await sb().from("payments").update(patch).in("id", ids);
+    let err = r1.error;
+    if (!err && patch.account_title) {
+      const docIds = [...new Set(ctx.payments.filter((p) => ids.includes(p.id) && p.document_id).map((p) => p.document_id!))];
+      if (docIds.length) err = (await sb().from("documents").update({ account_title: patch.account_title }).in("id", docIds)).error;
+    }
     setBusy(null);
-    const err = r1.error ?? r2.error;
     if (err) { ctx.toast(`変更できませんでした（${err.message}）`, true); return; }
-    ctx.toast(`${ids.length}件を「${title}」にしました`); ctx.reload();
+    ctx.toast(`${ids.length}件を「${label}」にしました`); ctx.reload();
   }
+
+  const cfSelect = (value: string, onChange: (v: string) => void, aria: string, disabled: boolean, mixed = false) => (
+    <select className="inp" style={{ width: 196, height: 32, padding: "0 8px", fontSize: 13 }} value={mixed ? "" : value} disabled={disabled} aria-label={aria}
+      onChange={(e) => e.target.value && onChange(e.target.value)}>
+      {mixed && <option value="">（混在）</option>}
+      {CF_SECTIONS.map((sec) => (
+        <optgroup key={sec.key} label={sec.label}>
+          {sec.items.map((it) => <option key={it} value={it}>{sec.label.replace("CF", "")}｜{it}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
 
   return (
     <section className="card pad stack" style={{ gap: 12 }}>
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
         <div className="stack" style={{ gap: 2 }}>
-          <h2 className="h2">取り込んだ請求書の勘定科目（買掛金・未払金）</h2>
-          <span className="muted" style={{ fontSize: 12 }}>仕入先は「買掛金」、経費の支払先は「未払金」に。支払先ごとにまとめて切り替えられます（月別推移・フォルダ・仕訳に反映）</span>
+          <h2 className="h2">勘定科目・支出項目（営業CF／投資CF／財務CF）</h2>
+          <span className="muted" style={{ fontSize: 12 }}>支払先ごとに 買掛金・未払金 と 支出項目 を選べます。選んだ支出項目は、その支払先の今後の支払にも引き継がれ、ダッシュボードのキャッシュフロー区分に反映されます</span>
         </div>
-        <button type="button" className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{open ? "閉じる" : `開く（${groups.length}社・買掛金 ${nAp}社）`}</button>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{open ? "閉じる" : `開く（${groups.length}社・買掛金 ${nAp}社・投資/財務 ${nNonOp}社）`}</button>
       </div>
       {open && (
         <>
-          <input className="inp" placeholder="支払先で絞り込み" value={q} onChange={(e) => setQ(e.target.value)} aria-label="支払先で絞り込み" style={{ maxWidth: 320 }} />
+          <div className="row wrap" style={{ gap: 12 }}>
+            <input className="inp" placeholder="支払先で絞り込み" value={q} onChange={(e) => setQ(e.target.value)} aria-label="支払先で絞り込み" style={{ maxWidth: 320 }} />
+            <label className="row" style={{ gap: 6, fontSize: 13 }}><input type="checkbox" checked={pdfOnly} onChange={(e) => setPdfOnly(e.target.checked)} />PDFを取り込んだ支払先のみ</label>
+          </div>
           <div className="stack" style={{ gap: 0 }}>
-            {groups.length === 0 && <div className="empty">PDFから取り込んだ支払はまだありません</div>}
+            {groups.length === 0 && <div className="empty">該当する支払はありません</div>}
             {groups.map((g) => {
               const cur = g.titles.length === 1 ? g.titles[0] : "";
+              const ids = g.ps.map((p) => p.id);
               return (
                 <div key={g.name} style={{ borderBottom: "1px solid #EFEDE8", padding: "8px 0" }}>
                   <div className="row wrap" style={{ gap: 10 }}>
                     <button type="button" className="btn btn-sm" onClick={() => setExpanded(expanded === g.name ? null : g.name)} aria-label={`${g.name}の明細`} style={{ minWidth: 30 }}>{expanded === g.name ? "−" : "+"}</button>
-                    <span style={{ flex: "1 1 200px", fontWeight: 600, fontSize: 14 }}>{g.name}</span>
+                    <span style={{ flex: "1 1 180px", fontWeight: 600, fontSize: 14 }}>{g.name}{g.pdf > 0 && <span className="muted" style={{ fontSize: 11, fontWeight: 400, marginLeft: 6 }}>PDF {g.pdf}件</span>}</span>
                     <span className="num muted" style={{ fontSize: 12 }}>{g.ps.length}件</span>
                     <span className="num" style={{ width: 120, textAlign: "right", fontWeight: 700 }}>{yen(g.total)}</span>
                     <div className="row" style={{ gap: 4 }} role="group" aria-label={`${g.name}の勘定科目`}>
                       {(["買掛金", "未払金"] as const).map((t) => (
                         <button key={t} type="button" disabled={busy === g.name} className={"btn btn-sm" + (cur === t ? " btn-primary" : "")} aria-pressed={cur === t}
-                          onClick={() => cur !== t && apply(g.ps.map((p) => p.id), t, g.name)}>{t}</button>
+                          onClick={() => cur !== t && apply(ids, { account_title: t }, g.name, t)}>{t}</button>
                       ))}
-                      {!cur && <span className="chip st-auto">混在</span>}
                     </div>
+                    {cfSelect(g.cfs[0], (v) => apply(ids, { cf_item: v }, g.name, v), `${g.name}の支出項目`, busy === g.name, g.cfs.length > 1)}
                   </div>
                   {expanded === g.name && (
                     <div className="stack" style={{ gap: 4, padding: "8px 0 4px 40px" }}>
                       {[...g.ps].sort((a, b) => a.due_date.localeCompare(b.due_date)).map((p) => (
                         <div key={p.id} className="row wrap" style={{ gap: 10, fontSize: 13 }}>
                           <span className="num" style={{ width: 86 }}>{p.due_date}</span>
-                          <span style={{ flex: "1 1 160px" }} className="muted">{p.item ?? ""}</span>
+                          <span style={{ flex: "1 1 140px" }} className="muted">{p.item ?? ""}</span>
                           <span className="num" style={{ width: 110, textAlign: "right" }}>{yen(p.amount)}</span>
-                          <select className="inp" style={{ width: 120, height: 32, padding: "0 8px", fontSize: 13 }} value={p.account_title} disabled={busy === p.id}
-                            onChange={(e) => apply([p.id], e.target.value, p.id)} aria-label={`${p.due_date} ${g.name}の勘定科目`}>
+                          <select className="inp" style={{ width: 110, height: 32, padding: "0 8px", fontSize: 13 }} value={p.account_title} disabled={busy === p.id}
+                            onChange={(e) => apply([p.id], { account_title: e.target.value }, p.id, e.target.value)} aria-label={`${p.due_date} ${g.name}の勘定科目`}>
                             {[...new Set([...ACCOUNT_TITLES, p.account_title])].map((t) => <option key={t} value={t}>{t}</option>)}
                           </select>
-                          <button type="button" className="btn btn-sm" onClick={() => ctx.openDoc(p.document_id!)}>PDF</button>
+                          {cfSelect(cfItemOf(p, cfMap), (v) => apply([p.id], { cf_item: v }, p.id, v), `${p.due_date} ${g.name}の支出項目`, busy === p.id)}
+                          {p.document_id ? <button type="button" className="btn btn-sm" onClick={() => ctx.openDoc(p.document_id!)}>PDF</button> : <span style={{ width: 46 }} />}
                         </div>
                       ))}
                     </div>

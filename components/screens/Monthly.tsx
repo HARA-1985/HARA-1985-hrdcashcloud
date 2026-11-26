@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import type { Ctx } from "../ctx";
 import { pct, sameMonth, sum, yen, ymLabel } from "@/lib/format";
-import { CATS, catOf, projectFixed, viewPayments, type PayView } from "@/lib/view";
+import { CATS, CF_SECTIONS, catOf, cfItemOf, cfSectionOf, payeeCfMap, projectFixed, viewPayments, type PayView } from "@/lib/view";
 import { STATUS_CLS, STATUS_LABEL } from "@/lib/types";
 
 export default function Monthly({ ctx }: { ctx: Ctx }) {
@@ -25,9 +25,11 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
       return { m, t, segs, n: xs.length, conf: pct(t - e, t) };
     });
     const bankNames = [...new Set(proj.map((p) => p.bankName))];
+    const cfMap = payeeCfMap(ctx.payments);
     type Def = [string, string, (p: PayView) => boolean, string?];
     const defs: Def[] = [
       ...CATS.map((c, i) => [i === 0 ? "支払の種類" : "", c.label, (p: PayView) => catOf(p) === c.key, c.color] as Def),
+      ...CF_SECTIONS.map((c, i) => [i === 0 ? "CF区分" : "", c.label + "の支出", (p: PayView) => cfSectionOf(cfItemOf(p, cfMap)) === c.key] as Def),
       ...bankNames.map((b, i) => [i === 0 ? "金融機関" : "", b, (p: PayView) => p.bankName === b] as Def),
     ];
     const rows = defs.map(([g, label, f, color]) => {
