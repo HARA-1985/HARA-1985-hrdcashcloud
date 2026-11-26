@@ -180,7 +180,32 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
       const { data } = await sb().from("payees").select("id").eq("company_id", ctx.company.id).eq("name", row.name).single();
       if (data) await sb().from("payments").update({ payee_id: data.id }).eq("company_id", ctx.company.id).eq("payee_name", row.name).is("payee_id", null);
     }
-    ctx.toast("支払先を保存しました"); setEdit(null); ctx.reload();
+    ctx.toast("支払先を保存しました"); setEdit(null); setReadNote(""); ctx.reload();
+  }
+  const [reading, setReading] = useState(false);
+  const [readNote, setReadNote] = useState("");
+  async function readPdf(f: File | undefined) {
+    if (!f) return;
+    setReading(true); setReadNote("");
+    const { data } = await sb().auth.getSession();
+    const fd = new FormData(); fd.append("companyId", ctx.company.id); fd.append("file", f);
+    const res = await fetch("/api/payees/extract", { method: "POST", headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` }, body: fd });
+    const j = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; info?: Record<string, string | undefined> };
+    setReading(false);
+    if (!res.ok || !j.info) { ctx.toast(j.error ?? "読み取れませんでした", true); return; }
+    const i = j.info;
+    const nn = (x: string) => x.normalize("NFKC").replace(/\s|株式会社|\(株\)/g, "");
+    const exist = i.name ? ctx.payees.find((p) => nn(p.name) === nn(i.name!)) : undefined;
+    const base = exist ?? { ...blank, name: i.name ?? "" };
+    setEdit({
+      ...base,
+      name_kana: i.name_kana || base.name_kana || "",
+      bank_code: i.bank_code || base.bank_code || "", bank_kana: i.bank_kana || base.bank_kana || "",
+      branch_code: i.branch_code || base.branch_code || "", branch_kana: i.branch_kana || base.branch_kana || "",
+      account_type: i.account_type || base.account_type || "1", account_number: i.account_number || base.account_number || "",
+    });
+    const seen = [i.bank_name, i.branch_name, i.account_number && `${i.account_type === "2" ? "当座" : "普通"} ${i.account_number}`].filter(Boolean).join(" ／ ");
+    setReadNote(`${f.name} から読み取り：${seen || "口座情報なし"}${exist ? `（既存の支払先「${exist.name}」を更新します）` : ""}${i.note ? `。${i.note}` : ""}。内容を確認して「保存」してください`);
   }
   const unlinked = [...new Set(ctx.payments.filter((p) => !p.payee_id && p.source !== "card").map((p) => p.payee_name))];
   const [bulk, setBulk] = useState(false);
@@ -216,7 +241,14 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
         <div className="row" style={{ gap: 8 }}>
           {ctx.canApprove && <button type="button" className="btn btn-sm" onClick={cleanup}>使われていない支払先を整理</button>}
           {ctx.canApprove && <button type="button" className="btn btn-sm" onClick={() => setBulk((v) => !v)} aria-expanded={bulk}>口座をまとめて登録</button>}
-          {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => setEdit(blank)}>支払先を追加</button>}
+          {ctx.canWrite && (
+            <label className="btn btn-sm" style={{ cursor: reading ? "wait" : "pointer" }}>
+              {reading ? "読み取り中…" : "PDFから読み取って登録"}
+              <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" className="sr" disabled={reading}
+                onChange={(e) => { readPdf(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+          )}
+          {ctx.canWrite && <button type="button" className="btn btn-sm" onClick={() => { setReadNote(""); setEdit(blank); }}>支払先を追加</button>}
         </div>
       </div>
       {unused && (
@@ -256,6 +288,7 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
       ))}
       {edit && (
         <form className="stack" style={{ gap: 12, padding: 14, background: "#F7F6F3", borderRadius: 12 }} onSubmit={save}>
+          {readNote && <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, color: "#2236B8" }}>{readNote}</p>}
           <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
             <label className="field"><span>支払先名</span><input className="inp" required value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></label>
             <label className="field"><span>受取人名カナ</span><input className="inp" value={edit.name_kana ?? ""} onChange={(e) => setEdit({ ...edit, name_kana: e.target.value })} placeholder="ｻﾝﾌﾟﾙ(ｶ" /></label>

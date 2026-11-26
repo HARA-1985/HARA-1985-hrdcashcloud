@@ -10,6 +10,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // PDF の日本語テキスト抽出に使う CMap を、サーバー関数に同梱する
+  outputFileTracingIncludes: { "/api/**": ["./node_modules/pdfjs-dist/cmaps/**"] },
+  serverExternalPackages: ["zengin-code"],
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

@@ -114,7 +114,9 @@ export function fromText(text: string, ownNames: string[]): Partial<Extracted> {
 export async function pdfText(bytes: Uint8Array): Promise<string> {
   try {
     const { extractText, getDocumentProxy } = await import("unpdf");
-    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { join } = await import("node:path");
+    // 日本語フォント（CID）の文字を読むには CMap が必要
+    const pdf = await getDocumentProxy(new Uint8Array(bytes), { cMapUrl: join(process.cwd(), "node_modules/pdfjs-dist/cmaps") + "/", cMapPacked: true, useWorkerFetch: false });
     const { text } = await extractText(pdf, { mergePages: true });
     return Array.isArray(text) ? text.join("\n") : text;
   } catch {

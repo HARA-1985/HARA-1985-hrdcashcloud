@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import type { Ctx } from "../ctx";
 import { pct, sameMonth, sum, yen, ymLabel } from "@/lib/format";
-import { projectFixed, viewPayments, type PayView } from "@/lib/view";
+import { CATS, catOf, projectFixed, viewPayments, type PayView } from "@/lib/view";
 import { STATUS_CLS, STATUS_LABEL } from "@/lib/types";
 
 export default function Monthly({ ctx }: { ctx: Ctx }) {
@@ -20,20 +20,20 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
     const mMax = Math.max(1, ...totals);
     const cards = months.map((m) => {
       const xs = proj.filter(inM(m));
-      const t = sum(xs, (p) => p.amount), f = sum(xs.filter((p) => p.kind === "fixed"), (p) => p.amount), e = sum(xs.filter((p) => p.est), (p) => p.amount);
-      return { m, t, f, s: t - f, n: xs.length, conf: pct(t - e, t) };
+      const t = sum(xs, (p) => p.amount), e = sum(xs.filter((p) => p.est), (p) => p.amount);
+      const segs = CATS.map((c) => ({ ...c, v: sum(xs.filter((p) => catOf(p) === c.key), (p) => p.amount) }));
+      return { m, t, segs, n: xs.length, conf: pct(t - e, t) };
     });
     const bankNames = [...new Set(proj.map((p) => p.bankName))];
-    const accs = [...new Set(proj.map((p) => p.account_title))];
-    const defs: [string, string, (p: PayView) => boolean][] = [
-      ["区分", "毎月固定", (p) => p.kind === "fixed"], ["", "臨時", (p) => p.kind === "spot"],
-      ...bankNames.map((b, i) => [i === 0 ? "金融機関" : "", b, (p: PayView) => p.bankName === b] as [string, string, (p: PayView) => boolean]),
-      ...accs.map((a, i) => [i === 0 ? "勘定科目" : "", a, (p: PayView) => p.account_title === a] as [string, string, (p: PayView) => boolean]),
+    type Def = [string, string, (p: PayView) => boolean, string?];
+    const defs: Def[] = [
+      ...CATS.map((c, i) => [i === 0 ? "支払の種類" : "", c.label, (p: PayView) => catOf(p) === c.key, c.color] as Def),
+      ...bankNames.map((b, i) => [i === 0 ? "金融機関" : "", b, (p: PayView) => p.bankName === b] as Def),
     ];
-    const rows = defs.map(([g, label, f]) => {
+    const rows = defs.map(([g, label, f, color]) => {
       const vals = months.map((m) => sum(proj.filter(inM(m)).filter(f), (p) => p.amount));
-      return { g, label, vals, total: vals.reduce((a, b) => a + b, 0) };
-    });
+      return { g, label, color, vals, total: vals.reduce((a, b) => a + b, 0) };
+    }).filter((r) => r.total > 0 || !r.color);
     const totalRow = { g: "", label: "支払総額", vals: totals, total: totals.reduce((a, b) => a + b, 0) };
     const items = proj.filter(inM(months[sel]));
     return { cards, mMax, rows, totalRow, items };
@@ -56,7 +56,7 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
           {offset !== 0 && <button type="button" className="btn btn-sm" onClick={() => { setOffset(0); setSel(0); }}>今月から</button>}
           <button type="button" className="btn btn-sm" onClick={() => move(6)} aria-label="次の6か月">次の6か月 ›</button>
         </div>
-        <span className="muted" style={{ fontSize: 13 }}>{ymLabel(months[0])}〜{ymLabel(months[5])}（6か月）／ 毎月固定の支払は、請求書が届く前から「見込」として先の月に入ります（支払先ごとに直近月の内容）</span>
+        <span className="muted" style={{ fontSize: 13 }}>{ymLabel(months[0])}〜{ymLabel(months[5])}（6か月）／ 支払の種類（買掛金・経費・給与・税金社保・借入返済）ごとに色分け。毎月固定の支払は、請求書が届く前から「見込」として先の月に入ります（支払先ごとに直近月の内容）</span>
       </div>
       <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
         {v.cards.map((c, i) => (
@@ -64,12 +64,15 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
             <span style={{ fontSize: 13, fontWeight: 700 }}>{c.m.getMonth() + 1}月</span>
             <span className="num" style={{ fontSize: 20, fontWeight: 700 }}>{yen(c.t)}</span>
             <div className="stack" style={{ height: 120, width: "100%", justifyContent: "flex-end", borderRadius: 8, overflow: "hidden", background: "#F5F4F0" }}>
-              <div style={{ height: Math.round((c.s / v.mMax) * 100) + "%", background: "#E8743B" }} />
-              <div style={{ height: Math.round((c.f / v.mMax) * 100) + "%", background: "#2440D8" }} />
+              {[...c.segs].reverse().map((sg) => sg.v > 0 && <div key={sg.key} title={`${sg.label} ${yen(sg.v)}`} style={{ height: (sg.v / v.mMax) * 100 + "%", background: sg.color, borderTop: "1px solid #FFFFFF" }} />)}
             </div>
             <span className="num muted" style={{ fontSize: 12 }}>{c.n}件 ・ 確定 {c.conf}</span>
           </button>
         ))}
+      </div>
+
+      <div className="row wrap" style={{ gap: 14, fontSize: 12 }}>
+        {CATS.map((c) => <span key={c.key} className="row" style={{ gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: c.color, display: "inline-block" }} />{c.label}</span>)}
       </div>
 
       <section className="card scroll-x">
@@ -85,7 +88,7 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
             {v.rows.map((r, idx) => (
               <tr key={idx} className={r.g && idx ? "is-grp" : ""}>
                 <td className="nw" style={{ fontSize: 12, fontWeight: 600 }}>{r.g}</td>
-                <td className="nw" style={{ fontWeight: 600 }}>{r.label}</td>
+                <td className="nw" style={{ fontWeight: 600 }}>{r.color && <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, display: "inline-block", marginRight: 6 }} />}{r.label}</td>
                 {r.vals.map((x, i) => <td key={i} className={"num r nw" + (sel === i ? " is-sel" : "")}>{x ? yen(x) : "—"}</td>)}
                 <td className="num r nw" style={{ fontWeight: 700 }}>{yen(r.total)}</td>
               </tr>
@@ -110,7 +113,7 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
             <span className="num" style={{ width: 64, fontWeight: 700 }}>{p.md} <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>{p.wd}</span></span>
             <div className="stack" style={{ flex: "1 1 220px", minWidth: 0, gap: 2 }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{p.payee_name}</span>
-              <span className="muted" style={{ fontSize: 12 }}>{p.item ?? ""} ・ {p.bankName} ・ {p.account_title}</span>
+              <span className="muted" style={{ fontSize: 12 }}>{p.item ?? ""} ・ {p.bankName} ・ {CATS.find((c) => c.key === catOf(p))!.label}</span>
             </div>
             <span className={p.kindCls}>{p.kindLabel}</span>
             {p.est ? <span className="chip st-auto">見込</span> : <span className={STATUS_CLS[p.status]}>{STATUS_LABEL[p.status]}</span>}

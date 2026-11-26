@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { Ctx } from "../ctx";
 import { sameMonth, sum, yen } from "@/lib/format";
 import { viewPayments } from "@/lib/view";
-import { SOURCE_LABEL, STATUS_CLS, STATUS_LABEL, type PayStatus } from "@/lib/types";
+import { ACCOUNT_TITLES, SOURCE_LABEL, STATUS_CLS, STATUS_LABEL, type PayStatus } from "@/lib/types";
 import { sb } from "@/lib/supabase";
 
 type KindF = "all" | "fixed" | "spot";
@@ -112,7 +112,19 @@ export default function Schedule({ ctx }: { ctx: Ctx }) {
                   <td><span className={p.kindCls}>{p.kindLabel}</span></td>
                   <td className="nw" style={{ color: "#4A4E57" }}>{SOURCE_LABEL[p.source]}</td>
                   <td className="nw" style={{ color: "#4A4E57" }}>{p.bankName}</td>
-                  <td className="nw" style={{ color: "#4A4E57" }}>{p.account_title}</td>
+                  <td className="nw" style={{ color: "#4A4E57" }}>
+                    {ctx.canWrite && p.status !== "paid"
+                      ? <select className="inp" style={{ width: 104, height: 32, padding: "0 6px", fontSize: 13 }} value={p.account_title} aria-label={`${p.payee_name}の勘定科目`}
+                          onChange={async (e) => {
+                            const t = e.target.value;
+                            const { error } = await sb().from("payments").update({ account_title: t }).eq("id", p.id);
+                            if (!error && p.document_id) await sb().from("documents").update({ account_title: t }).eq("id", p.document_id);
+                            if (error) ctx.toast(error.message, true); else { ctx.toast(`勘定科目を「${t}」にしました`); ctx.reload(); }
+                          }}>
+                          {[...new Set([...ACCOUNT_TITLES, p.account_title])].map((t) => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      : p.account_title}
+                  </td>
                   <td className="num r nw" style={{ fontWeight: 700 }}>{p.amt}</td>
                   <td>{p.document_id ? <button type="button" className="btn btn-sm" onClick={() => ctx.openDoc(p.document_id!)} aria-label={`${p.payee_name}の書類を表示`}>PDF</button> : <span className="muted" style={{ fontSize: 12 }}>—</span>}</td>
                   <td className="nw"><span className={STATUS_CLS[p.status]}>{STATUS_LABEL[p.status]}</span></td>

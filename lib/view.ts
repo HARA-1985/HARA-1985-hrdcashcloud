@@ -54,3 +54,25 @@ export function projectFixed(ps: PayView[], until: Date): PayView[] {
   }
   return out.sort((a, b) => a.d.getTime() - b.d.getTime());
 }
+
+/** 月別推移・ダッシュボードで使う支払カテゴリ */
+export const CATS = [
+  { key: "ap", label: "買掛金（仕入）", color: "#2440D8" },
+  { key: "exp", label: "経費（未払金）", color: "#E8743B" },
+  { key: "pay", label: "給与", color: "#1F9D6B" },
+  { key: "tax", label: "税金・社会保険", color: "#8A5CD6" },
+  { key: "loan", label: "借入返済・利息", color: "#C23B5A" },
+  { key: "etc", label: "その他", color: "#9A9EA8" },
+] as const;
+export type CatKey = (typeof CATS)[number]["key"];
+
+export function catOf(p: Pick<Payment, "payee_name" | "item" | "account_title">): CatKey {
+  const t = `${p.payee_name ?? ""} ${p.item ?? ""}`;
+  if (/給与|賞与/.test(t) && !/税/.test(p.payee_name ?? "")) return "pay";
+  if (/税(?!理士)|社会保険|労働保険|年金事務所|健康保険/.test(t)) return "tax";
+  if (/返済|金融公庫|借入|利息/.test(t)) return "loan";
+  if (p.account_title === "買掛金") return "ap";
+  if (p.account_title && p.account_title !== "未払金") return "etc";
+  if (/^\s*振込\s*$/.test(p.item ?? "") && /^[ァ-ヶー\s　]+$/.test(p.payee_name ?? "")) return "etc"; // 目的不明の個人宛振込
+  return "exp";
+}

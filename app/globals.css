@@ -72,7 +72,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible,la
 .scroll-x{overflow-x:auto}
 
 /* specific */
-.kpi-dark{background:#17191E;color:#FFFFFF;border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:10px}
+.kpi-card{container-type:inline-size}
+.kpi-big{font-size:clamp(22px,11.5cqw,34px);line-height:1.15}
+.kpi-mid{font-size:clamp(20px,10cqw,28px);line-height:1.15}
+.kpi-dark{container-type:inline-size;background:#17191E;color:#FFFFFF;border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:10px}
 .bar{height:6px;border-radius:999px;overflow:hidden}
 .bar>div{height:100%;border-radius:999px}
 .drop{border:2px dashed #C3C0B7;border-radius:20px;background:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:340px;padding:32px;text-align:center;cursor:pointer;position:relative;transition:border-color .12s ease,background .12s ease}

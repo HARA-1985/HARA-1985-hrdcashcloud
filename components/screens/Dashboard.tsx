@@ -20,6 +20,8 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
     const start = new Date(today); start.setDate(today.getDate() - ((today.getDay() + 6) % 7));
     const until = new Date(start.getTime() + 56 * 864e5);
     const proj = projectFixed(all, until).filter((p) => p.status !== "paid");
+    const nmStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const nextTot = sum(projectFixed(all, new Date(today.getFullYear(), today.getMonth() + 2, 0)).filter((p) => sameMonth(p.d, nmStart)), (p) => p.amount);
     const wk = Array.from({ length: 8 }, (_, i) => ({ f: 0, s: 0, st: new Date(start.getTime() + i * 7 * 864e5) }));
     for (const p of proj) {
       const i = Math.floor((p.d.getTime() - start.getTime()) / (7 * 864e5));
@@ -35,7 +37,7 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
     const banks = group(thisM, (p) => p.bankName);
     const payees = group(all.filter((p) => p.d >= today), (p) => p.payee_name).slice(0, 5);
     const upcoming = all.filter((p) => p.d >= today && p.status !== "paid").slice(0, 6);
-    return { today, tot, fx, sp: tot - fx, count: thisM.length, next: sum(nextM, (p) => p.amount), soon, wait, wk, mx, banks, payees, upcoming };
+    return { today, tot, fx, sp: tot - fx, count: thisM.length, next: Math.max(nextTot, sum(nextM, (p) => p.amount)), soon, wait, wk, mx, banks, payees, upcoming };
   }, [ctx.payments, ctx.banks]);
 
   if (ctx.loading && ctx.payments.length === 0) return <div className="skeleton" style={{ height: 420 }} />;
@@ -59,18 +61,18 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
       <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         <div className="kpi-dark">
           <span style={{ fontSize: 12, fontWeight: 600, color: "#C9CBD1" }}>{mLabel} 支払予定総額</span>
-          <span className="num" style={{ fontSize: 34, fontWeight: 700, letterSpacing: "-.02em" }}>{yen(v.tot)}</span>
-          <span style={{ fontSize: 12, color: "#C9CBD1" }}>{v.count}件 ／ 翌月 {yen(v.next)}</span>
+          <span className="num kpi-big" style={{ fontWeight: 700, letterSpacing: "-.02em" }}>{yen(v.tot)}</span>
+          <span style={{ fontSize: 12, color: "#C9CBD1" }}>{v.count}件 ／ {v.today.getMonth() === 11 ? 1 : v.today.getMonth() + 2}月見込 {yen(v.next)}</span>
         </div>
-        <div className="card pad stack" style={{ gap: 10 }}>
+        <div className="card pad stack kpi-card" style={{ gap: 10 }}>
           <span className="lbl">毎月固定</span>
-          <span className="num" style={{ fontSize: 28, fontWeight: 700, color: "#2236B8" }}>{yen(v.fx)}</span>
+          <span className="num kpi-mid" style={{ fontWeight: 700, color: "#2236B8" }}>{yen(v.fx)}</span>
           <div className="bar" style={{ background: "#EAEDFC" }}><div style={{ width: pct(v.fx, v.tot), background: "#2440D8" }} /></div>
           <span className="muted" style={{ fontSize: 12 }}>総額の {pct(v.fx, v.tot)}</span>
         </div>
-        <div className="card pad stack" style={{ gap: 10 }}>
+        <div className="card pad stack kpi-card" style={{ gap: 10 }}>
           <span className="lbl">臨時</span>
-          <span className="num" style={{ fontSize: 28, fontWeight: 700, color: "#9A420A" }}>{yen(v.sp)}</span>
+          <span className="num kpi-mid" style={{ fontWeight: 700, color: "#9A420A" }}>{yen(v.sp)}</span>
           <div className="bar" style={{ background: "#FBEDE2" }}><div style={{ width: pct(v.sp, v.tot), background: "#E8743B" }} /></div>
           <span className="muted" style={{ fontSize: 12 }}>総額の {pct(v.sp, v.tot)}</span>
         </div>
