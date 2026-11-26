@@ -13,7 +13,7 @@ interface Row { bank: string; date: string; amount: number; payee?: string }
 const nz = (s: string) => s.normalize("NFKC").replace(/[\s()（）株式会社有限会社カ\)ｶ]/g, "").toUpperCase();
 
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { companyId?: string; rows?: Row[]; propagate?: boolean; dryRun?: boolean; since?: string };
+  const body = (await req.json().catch(() => ({}))) as { companyId?: string; rows?: Row[]; propagate?: boolean; dryRun?: boolean; since?: string; defaultBank?: string; defaultSources?: string[] };
   const a = await authorize(req, body.companyId);
   if ("error" in a) return json({ error: a.error }, a.status);
   if (!a.role || !["owner", "approver"].includes(a.role)) return json({ error: "権限がありません（オーナー・承認者のみ）" }, 403);
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
 
   const [{ data: banks }, { data: pays }] = await Promise.all([
     admin.from("bank_accounts").select("id, bank_name, branch_name, account_number").eq("company_id", cid),
-    admin.from("payments").select("id, due_date, payee_name, amount, status, bank_account_id").eq("company_id", cid).neq("status", "cancelled"),
+    admin.from("payments").select("id, due_date, payee_name, amount, status, bank_account_id, source").eq("company_id", cid).neq("status", "cancelled"),
   ]);
   const { data: payees } = await admin.from("payees").select("name, name_kana").eq("company_id", cid);
   const kanaOf = new Map((payees ?? []).filter((p) => p.name_kana).map((p) => [p.name, nz(p.name_kana!)]));
@@ -92,6 +92,18 @@ export async function POST(req: Request) {
       const l = latest.get(p.payee_name);
       if (!l || used.has(p.id) || p.due_date < since || p.status === "approved" || (!body.since && p.status === "paid") || p.bank_account_id === l.bank) continue;
       prop.push({ id: p.id, bank: l.bank, payee: p.payee_name, due: p.due_date });
+    }
+  }
+
+  // 履歴の無い支払先：指定の取込元（例：請求書）で口座が未設定のものに既定の口座を付ける
+  if (body.defaultBank) {
+    const b = bankOf(body.defaultBank);
+    const since = body.since ?? new Date().toISOString().slice(0, 10);
+    const done = new Set([...assign, ...prop].map((x) => x.id));
+    if (b) for (const p of pays ?? []) {
+      if (p.bank_account_id || done.has(p.id) || p.due_date < since || p.status === "approved") continue;
+      if (body.defaultSources?.length && !body.defaultSources.includes(p.source)) continue;
+      prop.push({ id: p.id, bank: b.id, payee: p.payee_name, due: p.due_date });
     }
   }
 

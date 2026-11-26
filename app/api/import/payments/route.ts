@@ -1,4 +1,4 @@
-import { authorize, json } from "@/lib/server";
+import { authorize, json, payeeDefaults } from "@/lib/server";
 
 export const runtime = "nodejs";
 
@@ -32,12 +32,14 @@ export async function POST(req: Request) {
   if (names.length) await admin.from("payees").upsert(names.map((name) => ({ company_id: cid, name })), { onConflict: "company_id,name", ignoreDuplicates: true });
   const { data: payees } = await admin.from("payees").select("id, name").eq("company_id", cid);
   const pid = new Map((payees ?? []).map((p) => [p.name, p.id]));
+  const dflt = await payeeDefaults(admin, cid);
   let added = 0; const errors: string[] = [];
   for (let i = 0; i < toAdd.length; i += 200) {
     const chunk = toAdd.slice(i, i + 200);
     const { error } = await admin.from("payments").insert(chunk.map((r) => ({
       company_id: cid, due_date: r.date, payee_id: pid.get(r.payee) ?? null, payee_name: r.payee, item: r.item || null, amount: r.amount,
-      kind: r.kind, source: "manual", account_title: "未払金",
+      kind: r.kind, source: "manual", account_title: dflt.get(r.payee)?.account_title ?? "未払金",
+      bank_account_id: dflt.get(r.payee)?.bank_account_id ?? null, cf_item: dflt.get(r.payee)?.cf_item ?? null,
       status: r.date <= today ? "paid" : r.method === "引落" ? "auto_debit" : "pending", created_by: a.user.id,
     })));
     if (error) errors.push(error.message); else added += chunk.length;

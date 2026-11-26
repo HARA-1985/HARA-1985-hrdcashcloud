@@ -1,4 +1,4 @@
-import { authorize, json } from "@/lib/server";
+import { authorize, json, payeeDefaults } from "@/lib/server";
 import { kindOfFolder, normalizePayee, parseBoxName, type BoxRow } from "@/lib/boxname";
 
 export const runtime = "nodejs";
@@ -40,6 +40,7 @@ export async function POST(req: Request) {
   const { data: payees } = await admin.from("payees").select("id, name").eq("company_id", cid);
   const payeeId = new Map((payees ?? []).map((p) => [p.name, p.id]));
 
+  const dflt = await payeeDefaults(admin, cid);
   let added = 0; const errors: string[] = [];
   for (let i = 0; i < toAdd.length; i += 100) {
     const chunk = toAdd.slice(i, i + 100);
@@ -53,7 +54,8 @@ export async function POST(req: Request) {
     const docId = new Map((docs ?? []).map((d) => [d.mf_box_file_id, d.id]));
     const { error: pe } = await admin.from("payments").insert(chunk.map((t) => ({
       company_id: cid, due_date: t.due, payee_id: payeeId.get(t.payee) ?? null, payee_name: t.payee, item: t.item || null,
-      amount: t.amount, kind: kindOfFolder(t.folder), source: "invoice", account_title: "未払金",
+      amount: t.amount, kind: kindOfFolder(t.folder), source: "invoice", account_title: dflt.get(t.payee!)?.account_title ?? "未払金",
+      bank_account_id: dflt.get(t.payee!)?.bank_account_id ?? null, cf_item: dflt.get(t.payee!)?.cf_item ?? null,
       status: t.due! <= today ? "paid" : t.method === "振替" ? "auto_debit" : "pending",
       document_id: docId.get(t.boxId) ?? null, created_by: a.user.id,
     })));
