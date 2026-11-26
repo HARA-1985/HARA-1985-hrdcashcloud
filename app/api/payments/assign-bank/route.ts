@@ -24,6 +24,8 @@ export async function POST(req: Request) {
     admin.from("bank_accounts").select("id, bank_name, branch_name, account_number").eq("company_id", cid),
     admin.from("payments").select("id, due_date, payee_name, amount, status, bank_account_id").eq("company_id", cid).neq("status", "cancelled"),
   ]);
+  const { data: payees } = await admin.from("payees").select("name, name_kana").eq("company_id", cid);
+  const kanaOf = new Map((payees ?? []).filter((p) => p.name_kana).map((p) => [p.name, nz(p.name_kana!)]));
   const bankOf = (name: string) => {
     const k = nz(name);
     return (banks ?? []).find((b) => nz(`${b.bank_name}${b.branch_name ?? ""}${b.account_number ?? ""}`) === k)
@@ -34,11 +36,12 @@ export async function POST(req: Request) {
   const used = new Set<string>();
   const assign: { id: string; bank: string; payee: string; due: string }[] = [];
   const unknownBank = new Set<string>(); const unmatched: Row[] = [];
+  const second: { r: Row; b: { id: string } }[] = [];
   for (const r of rows) {
     const b = bankOf(r.bank);
     if (!b) { unknownBank.add(r.bank); continue; }
     const cands = (pays ?? []).filter((p) => !used.has(p.id) && p.amount === Math.round(Number(r.amount)) && Math.abs(day(p.due_date) - day(r.date)) <= 7);
-    if (!cands.length) { unmatched.push(r); continue; }
+    if (!cands.length) { second.push({ r, b }); continue; }
     const key = r.payee ? nz(r.payee) : "";
     cands.sort((x, y) => {
       const sx = key && (nz(x.payee_name).includes(key) || key.includes(nz(x.payee_name))) ? 0 : 1;
@@ -47,6 +50,29 @@ export async function POST(req: Request) {
     });
     const p = cands[0]; used.add(p.id);
     if (p.bank_account_id !== b.id) assign.push({ id: p.id, bank: b.id, payee: p.payee_name, due: p.due_date });
+  }
+
+  // 2回目：金額が一致しない出金（複数の請求書をまとめた振込、手数料差引など）は相手先名で照合
+  // 相手先のカナ（支払先マスタの受取人名カナ）や、よくある摘要の言い換えで支払先を特定し、±10日の支払に口座を付ける
+  const ALIAS: [RegExp, RegExp][] = [
+    [/ｷﾕｳﾖ|給与/, /給与/], [/ｺｸｾﾞｲ|ﾆﾎﾝﾊﾞｼｾﾞｲﾑｼﾖ/, /国税|源泉|法人税/], [/ﾁﾎｳｾﾞｲ|チホウゼイ/, /地方税|住民税|事業税/],
+    [/ｼﾔｶｲﾎｹﾝ/, /社会保険/], [/ﾛｳﾄﾞｳﾎｹﾝ|ロウドウホケン/, /労働保険/], [/金融公庫/, /金融公庫/], [/ｺﾞﾍﾝｻｲ/, /借入返済|返済/],
+    [/ﾃｽｳﾘﾖｳ|ﾋﾞｼﾞﾈｽｻｲﾄ/, /銀行手数料（みずほ/], [/ＢＺ手数料|振込手数料|BZ手数料/, /銀行手数料（三菱UFJ/], [/コテイシサンゼイ/, /固定資産税/],
+    [/ゼイリシ/, /税理士/],
+  ];
+  for (const { r, b } of second) {
+    const key = nz(r.payee ?? "");
+    const alias = ALIAS.find(([re]) => re.test(r.payee ?? ""))?.[1];
+    const names = new Set((pays ?? []).map((p) => p.payee_name).filter((n) => {
+      if (alias) return alias.test(n);
+      if (key.length < 3) return false;
+      const k = kanaOf.get(n); const nn = nz(n);
+      return (k && (k.includes(key) || key.includes(k))) || nn.includes(key) || (nn.length >= 3 && key.includes(nn));
+    }));
+    if (!names.size) { unmatched.push(r); continue; }
+    const hits = (pays ?? []).filter((p) => names.has(p.payee_name) && !used.has(p.id) && Math.abs(day(p.due_date) - day(r.date)) <= 10);
+    if (!hits.length) { unmatched.push(r); continue; }
+    for (const p of hits) { used.add(p.id); if (p.bank_account_id !== b.id) assign.push({ id: p.id, bank: b.id, payee: p.payee_name, due: p.due_date }); }
   }
 
   // 支払先ごとの直近の振込元 → 今後の未払いへ
