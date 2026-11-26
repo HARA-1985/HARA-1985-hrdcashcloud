@@ -6,14 +6,14 @@ export const runtime = "nodejs";
  * 銀行の出金明細（出金伝票）から、各支払の振込元口座を特定して payments.bank_account_id に反映する。
  * rows: { bank: 口座の名前（例「三菱UFJ銀行」「みずほ銀行」）, date: YYYY-MM-DD, amount, payee?: 相手先（任意） }
  * - 金額が一致し、日付が近い（±7日）支払に口座を付ける。相手先が書かれていれば名前の近いものを優先
- * - propagate=true のとき、支払先ごとに直近で特定できた口座を、その支払先の今後の未払い（承認済み以外）にも付ける
+ * - propagate=true のとき、支払先ごとに直近で特定できた口座を、since 以降（明細の無い期間）の支払にも付ける（承認済みは除く）
  * - dryRun=true なら書き込まずに結果だけ返す
  */
 interface Row { bank: string; date: string; amount: number; payee?: string }
 const nz = (s: string) => s.normalize("NFKC").replace(/[\s()（）株式会社有限会社カ\)ｶ]/g, "").toUpperCase();
 
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { companyId?: string; rows?: Row[]; propagate?: boolean; dryRun?: boolean };
+  const body = (await req.json().catch(() => ({}))) as { companyId?: string; rows?: Row[]; propagate?: boolean; dryRun?: boolean; since?: string };
   const a = await authorize(req, body.companyId);
   if ("error" in a) return json({ error: a.error }, a.status);
   if (!a.role || !["owner", "approver"].includes(a.role)) return json({ error: "権限がありません（オーナー・承認者のみ）" }, 403);
@@ -60,10 +60,11 @@ export async function POST(req: Request) {
       const cur = latest.get(p.payee_name);
       if (bank && (!cur || p.due_date > cur.due)) latest.set(p.payee_name, { bank, due: p.due_date });
     }
-    const today = new Date().toISOString().slice(0, 10);
+    // since 以降（＝明細がまだ無い期間）の支払に引き継ぐ。指定が無ければ今日以降の未払い
+    const since = body.since && /^\d{4}-\d{2}-\d{2}$/.test(body.since) ? body.since : new Date().toISOString().slice(0, 10);
     for (const p of pays ?? []) {
       const l = latest.get(p.payee_name);
-      if (!l || used.has(p.id) || p.due_date < today || p.status === "paid" || p.status === "approved" || p.bank_account_id === l.bank) continue;
+      if (!l || used.has(p.id) || p.due_date < since || p.status === "approved" || (!body.since && p.status === "paid") || p.bank_account_id === l.bank) continue;
       prop.push({ id: p.id, bank: l.bank, payee: p.payee_name, due: p.due_date });
     }
   }
