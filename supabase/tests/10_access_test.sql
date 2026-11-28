@@ -222,4 +222,48 @@ select t.ok((select count(*) from public.payments) >= 2, '2段階認証済みの
 select set_config('request.jwt.claims', '', false);
 reset role;
 
+
+-- ===== アカウント一覧・予算（20261128150000） =====
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000f', false);
+select t.ok((select count(*) from public.managed_members() where company_id = t.id('x')) >= 1, 'アカウント一覧：事務所オーナーは顧問先Xのメンバーも管理できる');
+select t.ok(exists (select 1 from public.managed_members() where company_id = t.id('firm')), 'アカウント一覧：事務所オーナーは自事務所のメンバーを管理できる');
+update public.memberships set role = 'member' where company_id = t.id('x') and user_id = '00000000-0000-0000-0000-0000000000c2';
+select t.ok((select role from public.memberships where company_id = t.id('x') and user_id = '00000000-0000-0000-0000-0000000000c2') = 'member', '事務所オーナーは顧問先メンバーの権限を変更できる');
+reset role;
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000f2', false);
+select t.ok((select count(*) from public.managed_members()) = 0, 'アカウント一覧：一般メンバーには管理対象がない');
+-- 事務所スタッフ（member）が顧問先Xの予算を作る
+reset role;
+create temp table bud (id uuid); grant all on bud to public;
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000f2', false);
+with z as (insert into public.budgets(company_id, fiscal_year, name) values (t.id('x'), 2026, '当初予算') returning id) insert into bud select id from z;
+select t.ok(public.budget_replace_lines((select id from bud), '[{"cf_item":"仕入支払","payee_name":"A社","month":"2026-04-15","amount":100000},{"cf_item":"仕入支払","payee_name":"A社","month":"2026-04-01","amount":50000},{"cf_item":"人件費","payee_name":"","month":"2026-05-01","amount":300000}]'::jsonb) = 2, '予算明細を一括保存できる（同じ月・相手先は合算）');
+select t.ok((select amount from public.budget_lines where payee_name = 'A社') = 150000, '予算明細の月は月初にそろえて合算される');
+do $$ begin
+  perform public.budget_set_status((select id from bud), true);
+  raise exception 'FAIL: 担当者が予算を承認できた';
+exception when insufficient_privilege then raise notice 'ok - 担当者は予算を承認できない'; end $$;
+do $$ begin
+  update public.budgets set status = 'approved' where id = (select id from bud);
+  raise exception 'FAIL: 予算の承認状態を直接書き換えられた';
+exception when raise_exception then
+  if sqlerrm like 'FAIL%' then raise; end if; raise notice 'ok - 予算の承認状態は直接書き換えられない'; end $$;
+reset role;
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000f', false);
+select public.budget_set_status((select id from bud), true);
+select t.ok((select status from public.budgets where id = (select id from bud)) = 'approved', '事務所オーナーは顧問先の予算を承認できる');
+do $$ begin
+  perform public.budget_replace_lines((select id from bud), '[]'::jsonb);
+  raise exception 'FAIL: 承認済み予算を変更できた';
+exception when raise_exception then
+  if sqlerrm like 'FAIL%' then raise; end if; raise notice 'ok - 承認済みの予算は変更できない'; end $$;
+reset role;
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000ee', false);
+select t.ok((select count(*) from public.budgets) = 0 and (select count(*) from public.budget_lines) = 0, '部外者は予算を見られない');
+do $$ begin
+  insert into public.budgets(company_id, fiscal_year) values (t.id('x'), 2027);
+  raise exception 'FAIL: 部外者が予算を作れた';
+exception when insufficient_privilege then raise notice 'ok - 部外者は予算を作れない'; end $$;
+reset role;
+
 \echo '=== ALL TESTS PASSED ==='

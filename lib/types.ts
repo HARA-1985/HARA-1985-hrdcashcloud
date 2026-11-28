@@ -8,7 +8,7 @@ export type CompanyKind = "hrd" | "accounting_firm" | "client";
 export interface Company {
   id: string; name: string; name_kana: string | null; kind: CompanyKind; mf_plan: string | null; mf_account_map?: MfAccountMap | null;
   trial_ends_at?: string | null; firm_code?: string | null; managed_by_firm_id?: string | null;
-  suspended_at?: string | null; billing_exempt?: boolean;
+  suspended_at?: string | null; billing_exempt?: boolean; fiscal_start_month?: number;
 }
 export interface FirmClient { firm_id: string; company_id: string; status: "active" | "revoked"; created_at?: string }
 /** active：契約中（無料扱い含む）／trial：無料期間中／covered_by_firm：会計事務所の契約で利用中／expired：期限切れ／suspended：利用停止中 */

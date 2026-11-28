@@ -4,6 +4,7 @@ import type { Ctx } from "../ctx";
 import { md, pct, sameMonth, sum, yen } from "@/lib/format";
 import { CF_SECTIONS, cfItemOf, cfSectionOf, payeeCfMap, projectFixed, viewPayments } from "@/lib/view";
 import Icon from "../Icon";
+import BudgetPanel from "../BudgetPanel";
 
 export default function Dashboard({ ctx }: { ctx: Ctx }) {
   const [pm, setPm] = useState(0); // 相手先別：0=今月 1=来月
@@ -91,6 +92,8 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
       </div>
 
       <CfPanel ctx={ctx} />
+
+      <BudgetPanel ctx={ctx} />
 
       <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
         <section className="card pad stack" style={{ gap: 18, gridColumn: "1 / -1", minWidth: 0 }}>
