@@ -36,9 +36,9 @@ const ALWAYS_OPEN: Screen[] = ["billing", "clients", "admin"];
 const ROLE_ORDER: Role[] = ["owner", "approver", "member", "viewer"];
 const TITLES: Record<Screen, string> = {
   dashboard: "資金繰りダッシュボード", monthly: "月別推移", schedule: "支払予定", invoice: "請求書を登録", expense: "立替経費を登録",
-  card: "クレジットカード（マネーフォワード連携）", fb: "FBデータ作成", folders: "書類フォルダ", settings: "設定",
-  clients: "顧問先", billing: "プラン・お支払い", admin: "HRD管理（全アカウント）",
-  budget: "予算（入力・予算実績比較・次年度予算案）", accounts: "アカウントと権限",
+  card: "クレジットカード", fb: "FBデータ作成", folders: "書類フォルダ", settings: "設定",
+  clients: "顧問先", billing: "プラン", admin: "管理",
+  budget: "予算", accounts: "アカウント",
 };
 
 const store = {
@@ -91,7 +91,7 @@ export default function App() {
     const u = new URL(window.location.href);
     const r = u.searchParams.get("billing");
     if (!r) return;
-    if (r === "success") toast("お申し込みありがとうございます。反映まで数秒かかることがあります");
+    if (r === "success") toast("お申し込みありがとうございます");
     setScreen("billing");
     u.searchParams.delete("billing");
     window.history.replaceState(null, "", u.pathname + u.search);
@@ -124,7 +124,7 @@ export default function App() {
     const timer = setInterval(async () => {
       if (Date.now() - last > IDLE_LIMIT_MS) {
         await sb().auth.signOut();
-        window.alert("30分間操作がなかったため、安全のためログアウトしました。");
+        window.alert("一定時間操作がなかったため、ログアウトしました");
       }
     }, 60 * 1000);
     return () => { evs.forEach((e) => window.removeEventListener(e, touch)); clearInterval(timer); };
@@ -225,13 +225,13 @@ export default function App() {
   const view: Screen = expired && !ALWAYS_OPEN.includes(screen) ? "billing" : screen;
   const nav: [Screen, string][] = [
     ...NAV.slice(0, 2), ["budget", "予算"], ...NAV.slice(2, -1),
-    ...(company ? [["clients", company.kind === "client" ? "顧問の会計事務所" : "顧問先"] as [Screen, string]] : []),
-    ...(role === "owner" ? [["accounts", "アカウントと権限"] as [Screen, string]] : []),
+    ...(company ? [["clients", company.kind === "client" ? "会計事務所" : "顧問先"] as [Screen, string]] : []),
+    ...(role === "owner" ? [["accounts", "アカウント"] as [Screen, string]] : []),
     NAV[NAV.length - 1],
-    ...(company && company.kind !== "hrd" ? [["billing", "プラン・お支払い"] as [Screen, string]] : []),
-    ...(isHrd ? [["admin", "HRD管理"] as [Screen, string]] : []),
+    ...(company && company.kind !== "hrd" ? [["billing", "プラン"] as [Screen, string]] : []),
+    ...(isHrd ? [["admin", "管理"] as [Screen, string]] : []),
   ];
-  const title = view === "clients" && company?.kind === "client" ? "顧問の会計事務所" : TITLES[view];
+  const title = view === "clients" && company?.kind === "client" ? "会計事務所" : TITLES[view];
 
   // 会社切り替えメニューのグループ：自分の事務所・自社 → 事務所ごとの顧問先 → その他（HRD管理者のみ）
   const groups = (() => {
@@ -240,15 +240,15 @@ export default function App() {
     const out: { label: string; items: Company[] }[] = [];
     const own = switchable.filter((c) => mySet.has(c.id) || (isHrd && c.kind === "hrd"));
     own.forEach((c) => used.add(c.id));
-    if (own.length) out.push({ label: "自分の事務所・会社", items: own });
+    if (own.length) out.push({ label: "自社", items: own });
     for (const fid of firmIds) {
       const firm = switchable.find((c) => c.id === fid);
       const items = switchable.filter((c) => !used.has(c.id) && firmClients.some((l) => l.status === "active" && l.firm_id === fid && l.company_id === c.id));
       items.forEach((c) => used.add(c.id));
-      if (items.length) out.push({ label: `${firm?.name ?? "会計事務所"}の顧問先`, items });
+      if (items.length) out.push({ label: `顧問先　${firm?.name ?? ""}`, items });
     }
     const rest = switchable.filter((c) => !used.has(c.id));
-    if (rest.length) out.push({ label: "その他のアカウント", items: rest });
+    if (rest.length) out.push({ label: "その他", items: rest });
     return out;
   })();
 
@@ -275,7 +275,7 @@ export default function App() {
           <div className="logo">HRD</div>
           <div className="stack" style={{ gap: 2 }}>
             <span style={{ fontSize: 14, fontWeight: 700 }}>HRD資金繰りクラウド</span>
-            <span style={{ fontSize: 11, color: "#A9ACB4" }}>{isHrd ? "マスター管理者（HRD総合事務所）" : company ? KIND_LABEL[company.kind] : ""}</span>
+            <span style={{ fontSize: 11, color: "#A9ACB4" }}>{isHrd ? "マスター管理者" : company ? KIND_LABEL[company.kind] : ""}</span>
           </div>
         </div>
         {switchable.length > 0 && (
@@ -284,7 +284,7 @@ export default function App() {
             <select className="co-select" value={cid ?? ""} onChange={(e) => { setCid(e.target.value); setScreen("dashboard"); }}>
               {groups.map((g) => (
                 <optgroup key={g.label} label={g.label}>
-                  {g.items.map((c) => <option key={c.id} value={c.id}>{c.kind === "hrd" ? "★ " : c.kind === "accounting_firm" ? "◆ " : ""}{c.name}{c.suspended_at ? "（停止中）" : ""}</option>)}
+                  {g.items.map((c) => <option key={c.id} value={c.id}>{c.name}{c.suspended_at ? "（停止中）" : ""}</option>)}
                 </optgroup>
               ))}
             </select>
@@ -302,12 +302,12 @@ export default function App() {
         {access === "trial" && company && (
           <button type="button" className="side-note" onClick={() => setScreen("billing")} style={{ border: 0, textAlign: "left", color: "#FFFFFF" }}>
             <span style={{ fontSize: 11, color: "#A9ACB4" }}>無料期間</span>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>あと <span className="num">{daysLeft(company.trial_ends_at)}</span> 日（プランを見る）</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>残り <span className="num">{daysLeft(company.trial_ends_at)}</span> 日</span>
           </button>
         )}
         <div className="side-note" style={access === "trial" ? { marginTop: 0 } : undefined}>
-          <span style={{ fontSize: 11, color: "#A9ACB4" }}>原本の保管先</span>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>マネーフォワード クラウドBox{mf?.status === "connected" ? "（連携中）" : "（未連携）"}</span>
+          <span style={{ fontSize: 11, color: "#A9ACB4" }}>クラウドBox</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{mf?.status === "connected" ? "連携中" : "未連携"}</span>
         </div>
         <button type="button" className="nav-btn" onClick={() => sb().auth.signOut()}><Icon name="logout" /><span className="grow">ログアウト</span></button>
       </nav>
@@ -330,12 +330,12 @@ export default function App() {
 
         {!ctx && companies.length === 0 && (
           <div className="card empty">
-            まだ利用できる会社がありません。<br />HRD総合事務所から招待を受けると、ここに会社が表示されます。
+            利用できる会社がありません
           </div>
         )}
         {ctx && expired && view === "billing" && screen !== "billing" && (
           <div role="alert" className="card pad" style={{ background: "#FFF8F3", borderColor: "#FBEDE2", color: "#9A420A", fontSize: 14, fontWeight: 600 }}>
-            無料期間が終了したため、この画面は開けません。プランをお申し込みいただくと、すぐに続きからご利用いただけます。
+            無料期間が終了しました
           </div>
         )}
         {ctx && view === "dashboard" && <Dashboard ctx={ctx} />}

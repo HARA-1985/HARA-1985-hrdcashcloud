@@ -100,7 +100,7 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
           <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
             <h2 className="h2">今後8週間の支払見込み <button type="button" className="btn btn-sm" style={{ marginLeft: 8, verticalAlign: "middle" }} onClick={() => ctx.go("monthly")}>月別で見る</button></h2>
             <div className="row muted" style={{ gap: 14, fontSize: 12 }}>
-              <span className="row" style={{ gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: "#2440D8" }} />固定（見込含む）</span>
+              <span className="row" style={{ gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: "#2440D8" }} />固定</span>
               <span className="row" style={{ gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: "#E8743B" }} />臨時</span>
             </div>
           </div>
@@ -133,7 +133,7 @@ export default function Dashboard({ ctx }: { ctx: Ctx }) {
           <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
             <h2 className="h2">相手先別 上位5社（{v.pmStart.getMonth() + 1}月）</h2>
             <div className="row" style={{ gap: 4 }} role="group" aria-label="対象月">
-              {["今月", "来月（見込）"].map((l, i) => <button key={l} type="button" className={"btn btn-sm" + (pm === i ? " btn-primary" : "")} aria-pressed={pm === i} onClick={() => setPm(i)}>{l}</button>)}
+              {["今月", "来月"].map((l, i) => <button key={l} type="button" className={"btn btn-sm" + (pm === i ? " btn-primary" : "")} aria-pressed={pm === i} onClick={() => setPm(i)}>{l}</button>)}
             </div>
           </div>
           {v.payees.length === 0 && <span className="muted" style={{ fontSize: 13 }}>この月の支払はありません</span>}
@@ -195,13 +195,10 @@ function CfPanel({ ctx }: { ctx: Ctx }) {
   return (
     <section className="card pad stack" style={{ gap: 16 }}>
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 10 }}>
-        <div className="stack" style={{ gap: 2 }}>
-          <h2 className="h2">キャッシュフロー区分別の支出</h2>
-          <span className="muted" style={{ fontSize: 12 }}>支払予定を 営業・投資・財務 の支出項目で集計（入金は含みません）{v.est > 0 && ` ／ うち見込 ${yen(v.est)}`}</span>
-        </div>
+        <h2 className="h2">キャッシュフロー区分別の支出</h2>
         <div className="row" style={{ gap: 4 }} role="group" aria-label="対象月">
           {months.map((m, i) => (
-            <button key={i} type="button" className={"btn btn-sm" + (mi === i ? " btn-primary" : "")} aria-pressed={mi === i} onClick={() => setMi(i)}>{m.getMonth() + 1}月{i > 0 ? "（見込）" : ""}</button>
+            <button key={i} type="button" className={"btn btn-sm" + (mi === i ? " btn-primary" : "")} aria-pressed={mi === i} onClick={() => setMi(i)}>{m.getMonth() + 1}月</button>
           ))}
         </div>
       </div>
@@ -212,7 +209,7 @@ function CfPanel({ ctx }: { ctx: Ctx }) {
         {v.secs.map((s) => (
           <div key={s.key} className="stack" style={{ gap: 8, padding: 16, borderRadius: 12, background: "#FAFAF8", border: "1px solid #EFEDE8", minWidth: 0 }}>
             <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
-              <span className="row" style={{ gap: 6, fontSize: 13, fontWeight: 700 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: s.color, display: "inline-block" }} />{s.label}の支出</span>
+              <span className="row" style={{ gap: 6, fontSize: 13, fontWeight: 700 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: s.color, display: "inline-block" }} />{s.label}</span>
               <span className="muted num" style={{ fontSize: 12 }}>{pct(s.v, v.total)}</span>
             </div>
             <span className="num" style={{ fontSize: 22, fontWeight: 700, color: s.v ? "#17191E" : "#9A9EA8" }}>{yen(s.v)}</span>
@@ -227,7 +224,6 @@ function CfPanel({ ctx }: { ctx: Ctx }) {
           </div>
         ))}
       </div>
-      {ctx.canWrite && <button type="button" className="btn btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => ctx.go("invoice")}>支出項目を変更する（請求書画面）→</button>}
     </section>
   );
 }

@@ -30,7 +30,7 @@ export function fyMonths(fy: number, startMonth: number): string[] {
   return Array.from({ length: 12 }, (_, i) => mkey(new Date(fy, startMonth - 1 + i, 1)));
 }
 export const fyLabel = (fy: number, startMonth: number) =>
-  startMonth === 1 ? `${fy}年度（${fy}年1月〜12月）` : `${fy}年度（${fy}年${startMonth}月〜${fy + 1}年${startMonth - 1}月）`;
+  startMonth === 1 ? `${fy}年1月〜12月` : `${fy}年${startMonth}月〜${fy + 1}年${startMonth - 1}月`;
 
 /**
  * 支払予定を実績・見込の明細に直す。

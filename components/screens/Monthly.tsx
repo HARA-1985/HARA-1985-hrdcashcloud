@@ -80,7 +80,7 @@ export default function Monthly({ ctx }: { ctx: Ctx }) {
       <section className="card scroll-x">
         <div className="row wrap" style={{ padding: "18px 22px 8px", justifyContent: "space-between", gap: 12 }}>
           <h2 className="h2">月別 支払推移表</h2>
-          <button type="button" className="btn btn-sm" onClick={exportCsv}>CSV出力（Excelで開けます）</button>
+          <button type="button" className="btn btn-sm" onClick={exportCsv}>CSV</button>
         </div>
         <table className="tbl">
           <thead>

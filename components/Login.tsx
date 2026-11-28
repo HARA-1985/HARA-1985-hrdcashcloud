@@ -5,17 +5,9 @@ import { sb } from "@/lib/supabase";
 type Mode = "login" | "signup";
 export type SignupKind = "client" | "accounting_firm";
 
-const SIGNUP: Record<SignupKind, { title: string; lead: string; points: string[] }> = {
-  client: {
-    title: "企業（クライアント）として登録",
-    lead: "自社の支払予定・請求書・振込データを管理します。",
-    points: ["自社のマネーフォワード クラウドとつなげる", "顧問の会計事務所とあとからつながれる", "30日間すべての機能を無料で利用"],
-  },
-  accounting_firm: {
-    title: "会計事務所として登録",
-    lead: "顧問先ごとの資金繰りをまとめて管理します。",
-    points: ["顧問先を登録・招待して一覧で管理", "事務所コードで既存ユーザーとつながる", "30日間すべての機能を無料で利用"],
-  },
+const SIGNUP: Record<SignupKind, { title: string; lead: string }> = {
+  client: { title: "企業", lead: "自社の資金繰りを管理" },
+  accounting_firm: { title: "会計事務所", lead: "顧問先の資金繰りを管理" },
 };
 
 /** URL の ?signup= から初期状態を決める（LP の導線用：client / firm / 1） */
@@ -52,8 +44,8 @@ export default function Login() {
     setBusy(false);
     if (error) {
       setErr(mode === "login" && /signups? not allowed|not found|otp_disabled/i.test(error.message)
-        ? "このメールアドレスはまだ登録されていません。「新規登録」からお進みください。"
-        : /rate|seconds/i.test(error.message) ? "送信が続いたため、しばらく時間をおいてからお試しください。" : error.message);
+        ? "未登録のメールアドレスです"
+        : /rate|seconds/i.test(error.message) ? "しばらく時間をおいてお試しください" : error.message);
     } else setSent(true);
   }
 
@@ -62,7 +54,7 @@ export default function Login() {
       {(["login", "signup"] as Mode[]).map((m) => (
         <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => { setMode(m); setErr(""); if (m === "login") setKind(null); }}
           className="grow" style={{ minHeight: 40, border: 0, borderRadius: 9, fontSize: 14, fontWeight: 600, background: mode === m ? "#FFFFFF" : "transparent", color: mode === m ? "#17191E" : "#5B5F68", boxShadow: mode === m ? "0 1px 2px rgba(0,0,0,.08)" : "none" }}>
-          {m === "login" ? "ログイン" : "新規登録（1か月無料）"}
+          {m === "login" ? "ログイン" : "新規登録"}
         </button>
       ))}
     </div>
@@ -81,41 +73,29 @@ export default function Login() {
 
         {sent ? (
           <p style={{ lineHeight: 1.8, margin: 0 }}>
-            <strong>{email}</strong> に{mode === "signup" ? "登録" : "ログイン"}用のリンクを送りました。メールのリンクを開くと{mode === "signup" ? "登録の続きに進めます" : "ログインできます"}。
-            <br /><span className="muted" style={{ fontSize: 12 }}>リンクの有効期限は1時間です。届かない場合は迷惑メールフォルダもご確認ください。</span>
+            <strong>{email}</strong> にリンクを送信しました。
           </p>
         ) : mode === "signup" && !kind ? (
           <>
             {tabs}
-            <div className="stack" style={{ gap: 6 }}>
-              <strong style={{ fontSize: 15 }}>どちらとして登録しますか？</strong>
-              <span className="muted" style={{ fontSize: 12 }}>登録の種類によって、使える機能と初期設定が変わります。</span>
-            </div>
             <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))", gap: 12 }}>
               {(Object.keys(SIGNUP) as SignupKind[]).map((k) => (
-                <button key={k} type="button" className="tile" onClick={() => setKind(k)} style={{ gap: 10, padding: 18 }}>
-                  <span className="chip" style={{ background: k === "client" ? "#FBEDE2" : "#EAEDFC", color: k === "client" ? "#9A420A" : "#2236B8" }}>{k === "client" ? "クライアント" : "会計事務所"}</span>
-                  <strong style={{ fontSize: 15 }}>{SIGNUP[k].title}</strong>
-                  <span className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>{SIGNUP[k].lead}</span>
-                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.8, color: "#24272E" }}>
-                    {SIGNUP[k].points.map((p) => <li key={p}>{p}</li>)}
-                  </ul>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "#2440D8" }}>この内容で登録する →</span>
+                <button key={k} type="button" className="tile" onClick={() => setKind(k)} style={{ gap: 6, padding: 20 }}>
+                  <strong style={{ fontSize: 16 }}>{SIGNUP[k].title}</strong>
+                  <span className="muted" style={{ fontSize: 12 }}>{SIGNUP[k].lead}</span>
                 </button>
               ))}
             </div>
-            <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>会計事務所から招待メールが届いている方は、登録は不要です。招待メールのリンクからログインしてください。</p>
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>招待を受けた方は登録不要です</p>
           </>
         ) : (
           <>
             {tabs}
             {mode === "signup" && kind && (
-              <div className="stack" style={{ gap: 6, padding: 14, borderRadius: 12, background: kind === "client" ? "#FFF8F3" : "#EAEDFC" }}>
-                <div className="row" style={{ gap: 8 }}>
-                  <strong className="grow" style={{ fontSize: 14, color: kind === "client" ? "#9A420A" : "#2236B8" }}>{SIGNUP[kind].title}</strong>
-                  <button type="button" onClick={() => setKind(null)} style={{ border: 0, background: "none", color: "#2440D8", fontSize: 12, textDecoration: "underline", padding: 0 }}>変更</button>
-                </div>
-                <span style={{ fontSize: 12, lineHeight: 1.7, color: "#24272E" }}>登録から30日間は無料です。無料期間のあとは、プランのお申し込みで引き続きご利用いただけます。</span>
+              <div className="row" style={{ gap: 8, padding: "12px 14px", borderRadius: 12, background: "#F5F4F0" }}>
+                <strong className="grow" style={{ fontSize: 14 }}>{SIGNUP[kind].title}として登録</strong>
+                <span className="muted" style={{ fontSize: 12 }}>30日間無料</span>
+                <button type="button" onClick={() => setKind(null)} style={{ border: 0, background: "none", color: "#2440D8", fontSize: 12, textDecoration: "underline", padding: 0 }}>変更</button>
               </div>
             )}
             <label className="field">
@@ -123,9 +103,8 @@ export default function Login() {
               <input className="inp" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
             </label>
             <button className="btn btn-primary" type="submit" disabled={busy}>
-              {busy ? "送信中…" : mode === "signup" ? "登録用のリンクを送る" : "ログインリンクを送る"}
+              {busy ? "送信中…" : "リンクを送信"}
             </button>
-            <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>パスワードは使いません。届いたメールのリンクから{mode === "signup" ? "登録" : "ログイン"}します。</p>
           </>
         )}
         {err && <p role="alert" style={{ color: "#9B1C1C", margin: 0, fontSize: 13 }}>{err}</p>}

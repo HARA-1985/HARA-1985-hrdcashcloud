@@ -28,10 +28,9 @@ export default function Cards({ ctx }: { ctx: Ctx }) {
     <div className="stack" style={{ gap: 16 }}>
       <div className="card pad row wrap" style={{ gap: 16 }}>
         <div className="stack grow" style={{ gap: 4, flex: "1 1 280px" }}>
-          <span className="lbl">取得経路</span>
-          <strong>マネーフォワード クラウド経由（カード会社との連携はマネーフォワード側で設定）</strong>
+          <strong>マネーフォワード クラウド</strong>
           <span className="muted" style={{ fontSize: 13 }}>
-            {connected ? `連携中：${ctx.mf?.office_name ?? ""} ・ 最終同期 ${ctx.mf?.last_synced_at ? new Date(ctx.mf.last_synced_at).toLocaleString("ja-JP") : "—"}` : "まだマネーフォワードと連携していません（設定 › マネーフォワード連携）"}
+            {connected ? `${ctx.mf?.office_name ?? ""}　最終同期 ${ctx.mf?.last_synced_at ? new Date(ctx.mf.last_synced_at).toLocaleString("ja-JP") : "—"}` : ""}
           </span>
         </div>
         <span className={"chip " + (connected ? "st-ok" : "st-auto")}>{connected ? "連携中" : "未連携"}</span>
@@ -45,7 +44,7 @@ export default function Cards({ ctx }: { ctx: Ctx }) {
               <span className="lbl">次回引落</span>
               <strong style={{ fontSize: 15 }}>{p.payee_name}</strong>
               <span className="num" style={{ fontSize: 24, fontWeight: 700 }}>{yen(p.amount)}</span>
-              <span className="muted" style={{ fontSize: 12 }}>{md(parseDate(p.due_date))} 引落 ・ 支払予定に自動で入っています</span>
+              <span className="muted" style={{ fontSize: 12 }}>{md(parseDate(p.due_date))} 引落</span>
             </div>
           ))}
         </div>
@@ -56,9 +55,9 @@ export default function Cards({ ctx }: { ctx: Ctx }) {
           <h2 className="h2">利用明細</h2>
           <span className="muted" style={{ fontSize: 12 }}>{ctx.cards.length}件 ・ {yen(sum(ctx.cards, (t) => t.amount))}</span>
         </div>
-        {ctx.cards.length === 0 ? <div className="empty">マネーフォワードと連携すると、カードの利用明細がここに自動で入ります。</div> : (
+        {ctx.cards.length === 0 ? <div className="empty">利用明細はありません</div> : (
           <table className="tbl">
-            <thead><tr><th>利用日</th><th>利用先</th><th>カード</th><th>勘定科目（提案）</th><th className="r">金額</th><th>領収書</th></tr></thead>
+            <thead><tr><th>利用日</th><th>利用先</th><th>カード</th><th>勘定科目</th><th className="r">金額</th><th>領収書</th></tr></thead>
             <tbody>
               {byCard.flatMap(([, ts]) => ts).map((t) => (
                 <tr key={t.id}>

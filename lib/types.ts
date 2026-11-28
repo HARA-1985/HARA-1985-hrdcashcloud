@@ -15,7 +15,7 @@ export interface FirmClient { firm_id: string; company_id: string; status: "acti
 export type AccessStatus = "active" | "trial" | "covered_by_firm" | "expired" | "suspended";
 export interface Plan { code: string; company_kind: "accounting_firm" | "client"; name: string; monthly_price_jpy: number; per_client_price_jpy: number; stripe_price_id: string | null }
 export interface Subscription { company_id: string; plan_code: string | null; status: string; current_period_end: string | null; cancel_at_period_end: boolean; client_quantity: number }
-export const KIND_LABEL: Record<CompanyKind, string> = { hrd: "HRD総合事務所（会計事務所）", accounting_firm: "会計事務所", client: "企業" };
+export const KIND_LABEL: Record<CompanyKind, string> = { hrd: "会計事務所", accounting_firm: "会計事務所", client: "企業" };
 /** 会計事務所として顧問先を持てる種別 */
 export const isFirmKind = (k: CompanyKind | undefined) => k === "accounting_firm" || k === "hrd";
 export interface Profile { id: string; display_name: string | null; email: string | null; is_hrd_staff: boolean }

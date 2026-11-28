@@ -16,7 +16,7 @@ export function MfaChallenge({ onVerified, onSignOut }: { onVerified: () => void
     if (!factor) { setBusy(false); onVerified(); return; }
     const { error } = await sb().auth.mfa.challengeAndVerify({ factorId: factor.id, code: code.trim() });
     setBusy(false);
-    if (error) setErr("確認コードが正しくありません。認証アプリに表示されている最新の6桁を入力してください。");
+    if (error) setErr("コードが正しくありません");
     else onVerified();
   }
 
@@ -24,16 +24,14 @@ export function MfaChallenge({ onVerified, onSignOut }: { onVerified: () => void
     <div className="login-wrap">
       <form className="login" onSubmit={submit}>
         <div className="stack" style={{ gap: 6 }}>
-          <span className="lbl" style={{ color: "#2236B8" }}>2段階認証</span>
-          <h1 style={{ fontSize: 20, fontWeight: 700 }}>確認コードを入力してください</h1>
-          <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.7 }}>認証アプリ（Google Authenticator など）に表示されている6桁の数字を入力します。</p>
+          <h1 style={{ fontSize: 20, fontWeight: 700 }}>2段階認証</h1>
         </div>
         <label className="field">
-          <span>確認コード</span>
+          <span>認証アプリの6桁コード</span>
           <input className="inp num" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus
             value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} style={{ fontSize: 22, letterSpacing: ".3em", textAlign: "center" }} />
         </label>
-        <button className="btn btn-primary" type="submit" disabled={busy || code.length !== 6}>{busy ? "確認中…" : "確認する"}</button>
+        <button className="btn btn-primary" type="submit" disabled={busy || code.length !== 6}>{busy ? "確認中…" : "確認"}</button>
         {err && <p role="alert" style={{ color: "#9B1C1C", margin: 0, fontSize: 13 }}>{err}</p>}
         <button type="button" className="btn btn-ghost" onClick={onSignOut}>ログアウト</button>
       </form>
@@ -73,15 +71,15 @@ export function MfaSettings({ toast, required }: { toast: (m: string, err?: bool
     setBusy(false);
     if (error) { toast("確認コードが正しくありません", true); return; }
     setEnrolling(null); setCode("");
-    toast("2段階認証を設定しました。次回のログインから確認コードが必要になります");
+    toast("設定しました");
     load();
   }
 
   async function remove() {
-    if (!factorId || !window.confirm("2段階認証を解除します。アカウントの安全性が下がります。よろしいですか？")) return;
+    if (!factorId || !window.confirm("2段階認証を解除しますか？")) return;
     const { error } = await sb().auth.mfa.unenroll({ factorId });
     if (error) toast("解除できませんでした：" + error.message, true);
-    else { toast("2段階認証を解除しました"); load(); }
+    else { toast("解除しました"); load(); }
   }
 
   return (
@@ -90,38 +88,31 @@ export function MfaSettings({ toast, required }: { toast: (m: string, err?: bool
         <h2 className="h2 grow">2段階認証</h2>
         <span className={"chip " + (factorId ? "st-ok" : "st-wait")}>{factorId ? "設定済み" : "未設定"}</span>
       </div>
-      <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.7 }}>
-        ログインのたびに、メールのリンクに加えて認証アプリの確認コードを求めます。
-        {required && <strong style={{ color: "#9A420A" }}> HRD管理者は設定を強くおすすめします（設定すると、確認コードを入力したログインでのみ管理者機能が使えます）。</strong>}
-      </p>
+      {required && !factorId && <p style={{ margin: 0, fontSize: 13, color: "#9A420A" }}>管理者アカウントは設定を推奨します</p>}
       {!enrolling && (
         <div className="row" style={{ gap: 8 }}>
           {factorId
-            ? <button type="button" className="btn" onClick={remove}>2段階認証を解除</button>
-            : <button type="button" className="btn btn-primary" disabled={busy} onClick={start}>2段階認証を設定する</button>}
+            ? <button type="button" className="btn" onClick={remove}>解除</button>
+            : <button type="button" className="btn btn-primary" disabled={busy} onClick={start}>設定</button>}
         </div>
       )}
       {enrolling && (
         <form className="stack" style={{ gap: 12 }} onSubmit={verify}>
-          <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.9 }}>
-            <li>スマートフォンの認証アプリ（Google Authenticator、Microsoft Authenticator など）を開く</li>
-            <li>「QRコードをスキャン」で下のQRコードを読み取る（読み取れない場合はキーを手入力）</li>
-            <li>アプリに表示された6桁の数字を入力して「設定を完了」を押す</li>
-          </ol>
+          <span style={{ fontSize: 13 }}>認証アプリでQRコードを読み取り、表示された6桁を入力</span>
           <div className="row wrap" style={{ gap: 16, alignItems: "flex-start" }}>
             {/* Supabase が返す QR コード（SVG のデータURL） */}
             <img src={enrolling.qr} alt="2段階認証の設定用QRコード" width={180} height={180} style={{ border: "1px solid #E4E2DC", borderRadius: 12, background: "#fff" }} />
             <div className="stack" style={{ gap: 6, minWidth: 0 }}>
-              <span className="lbl">手入力用のキー</span>
+              <span className="lbl">キー</span>
               <code className="num" style={{ fontSize: 13, wordBreak: "break-all", padding: "6px 10px", borderRadius: 8, background: "#F5F4F0" }}>{enrolling.secret}</code>
             </div>
           </div>
           <div className="row wrap" style={{ gap: 10, alignItems: "flex-end" }}>
             <label className="field" style={{ flex: "0 1 200px" }}>
-              <span>確認コード（6桁）</span>
+              <span>6桁コード</span>
               <input className="inp num" inputMode="numeric" autoComplete="one-time-code" maxLength={6} required value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
             </label>
-            <button type="submit" className="btn btn-primary" disabled={busy || code.length !== 6}>設定を完了</button>
+            <button type="submit" className="btn btn-primary" disabled={busy || code.length !== 6}>完了</button>
             <button type="button" className="btn btn-ghost" onClick={async () => { await sb().auth.mfa.unenroll({ factorId: enrolling.id }); setEnrolling(null); }}>やめる</button>
           </div>
         </form>

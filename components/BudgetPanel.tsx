@@ -5,7 +5,7 @@ import { sb } from "@/lib/supabase";
 import { yen } from "@/lib/format";
 import { actualLines, BUDGET_MAIN, diffRate, fiscalYearOf, fmtRate, isLargeVariance, mkey, sumBy, type Budget, type BudgetLine } from "@/lib/budget";
 
-/** ダッシュボード：今月（または来月）の区分別 予算比較。大きく増えた区分は臨時の請求書から要因を示す */
+/** ダッシュボードの区分別予算比較。大きく増えた区分は臨時の請求書と相手先別の差を表示 */
 export default function BudgetPanel({ ctx }: { ctx: Ctx }) {
   const start = ctx.company.fiscal_start_month ?? 4;
   const [offset, setOffset] = useState(0);
@@ -45,18 +45,19 @@ export default function BudgetPanel({ ctx }: { ctx: Ctx }) {
   return (
     <section className="card pad stack" style={{ gap: 16 }}>
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
-        <h2 className="h2">予算比較（{mLabel}）
-          <button type="button" className="btn btn-sm" style={{ marginLeft: 8, verticalAlign: "middle" }} onClick={() => ctx.go("budget")}>予算を見る</button>
-        </h2>
-        <div className="row" style={{ gap: 4 }} role="group" aria-label="対象月">
-          {["今月", "来月（見込）"].map((l, i) => <button key={l} type="button" className={"btn btn-sm" + (offset === i ? " btn-primary" : "")} aria-pressed={offset === i} onClick={() => { setOffset(i); setOpen(null); }}>{l}</button>)}
+        <h2 className="h2">予算比較　<span className="muted" style={{ fontWeight: 500 }}>{mLabel}</span></h2>
+        <div className="row" style={{ gap: 8 }}>
+          <div className="seg" role="tablist" aria-label="対象月">
+            {["今月", "来月"].map((l, i) => <button key={l} type="button" role="tab" aria-selected={offset === i} onClick={() => { setOffset(i); setOpen(null); }}>{l}</button>)}
+          </div>
+          <button type="button" className="btn btn-sm" onClick={() => ctx.go("budget")}>詳細</button>
         </div>
       </div>
 
       {!budget ? (
         <div className="row wrap" style={{ gap: 12, padding: 16, borderRadius: 12, background: "#F5F4F0" }}>
-          <span className="grow" style={{ fontSize: 13 }}>{fy}年度の予算がまだありません。過去の支払実績から予算案を作ると、ここで区分ごとに予算と比べられます。</span>
-          {ctx.canWrite && <button type="button" className="btn btn-sm btn-primary" onClick={() => ctx.go("budget")}>予算を作成</button>}
+          <span className="grow muted" style={{ fontSize: 13 }}>{fy}年度の予算がありません</span>
+          {ctx.canWrite && <button type="button" className="btn btn-sm btn-primary" onClick={() => ctx.go("budget")}>作成</button>}
         </div>
       ) : (
         <>
@@ -71,10 +72,10 @@ export default function BudgetPanel({ ctx }: { ctx: Ctx }) {
                   style={{ gap: 8, borderColor: up ? "#F0B4B4" : large ? "#B7E0C6" : undefined, background: up ? "#FFF7F7" : undefined, cursor: "pointer" }}>
                   <div className="row" style={{ width: "100%", gap: 6 }}>
                     <span className="lbl grow">{c}</span>
-                    {large && <span className={"chip " + (up ? "st-err" : "st-ok")}>{up ? "増加" : "減少"} {fmtRate(diffRate(a, b))}</span>}
+                    {large && <span className={"chip " + (up ? "st-err" : "st-ok")}>{fmtRate(diffRate(a, b))}</span>}
                   </div>
                   <span className="num" style={{ fontSize: 20, fontWeight: 700 }}>{yen(a)}</span>
-                  <span className="muted num" style={{ fontSize: 12 }}>予算 {yen(b)} ／ 差 {a - b >= 0 ? "+" : ""}{yen(a - b)}</span>
+                  <span className="muted num" style={{ fontSize: 12 }}>予算 {yen(b)}</span>
                   <div className="stack" style={{ gap: 3, width: "100%" }}>
                     <div className="bar" style={{ background: "#EEEDE9" }}><div style={{ width: `${Math.round((b / w) * 100)}%`, background: "#A9ACB4" }} /></div>
                     <div className="bar" style={{ background: "#EEEDE9" }}><div style={{ width: `${Math.round((a / w) * 100)}%`, background: up ? "#C23B3B" : "#2440D8" }} /></div>
@@ -82,11 +83,6 @@ export default function BudgetPanel({ ctx }: { ctx: Ctx }) {
                 </button>
               );
             })}
-          </div>
-          <div className="row muted" style={{ gap: 14, fontSize: 12 }}>
-            <span className="row" style={{ gap: 6 }}><span style={{ width: 10, height: 6, borderRadius: 3, background: "#A9ACB4" }} />予算</span>
-            <span className="row" style={{ gap: 6 }}><span style={{ width: 10, height: 6, borderRadius: 3, background: "#2440D8" }} />実績・見込</span>
-            <span>差異 ±20% 以上かつ10万円以上で「増加／減少」を表示。カードを押すと内訳を表示します。</span>
           </div>
           {open && <Factors ctx={ctx} cf={open} lines={actual.filter((a) => a.cf_item === open)} budget={bCat.get(open) ?? 0} budgetLines={lines.filter((l) => l.cf_item === open)} />}
         </>
@@ -110,9 +106,9 @@ function Factors({ ctx, cf, lines, budget, budgetLines }: {
   return (
     <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 12 }}>
       <div className="stack" style={{ gap: 8, padding: 16, borderRadius: 12, border: "1px solid #F0C9AE", background: "#FFF8F3" }}>
-        <strong style={{ fontSize: 13, color: "#9A420A" }}>{cf}：臨時の請求書（増加要因の候補）</strong>
-        <span className="muted" style={{ fontSize: 12 }}>臨時 {yen(spotTotal)}（{total ? Math.round((spotTotal / total) * 100) : 0}%）／ 予算との差 {total - budget >= 0 ? "+" : ""}{yen(total - budget)}</span>
-        {spot.length === 0 ? <span className="muted" style={{ fontSize: 13 }}>この月の臨時の支払はありません。毎月固定の金額の変化をご確認ください。</span> : spot.slice(0, 6).map((a) => (
+        <strong style={{ fontSize: 13, color: "#9A420A" }}>臨時の請求書</strong>
+        <span className="muted num" style={{ fontSize: 12 }}>{yen(spotTotal)}　予算差 {total - budget >= 0 ? "+" : ""}{yen(total - budget)}</span>
+        {spot.length === 0 ? <span className="muted" style={{ fontSize: 13 }}>臨時の支払はありません</span> : spot.slice(0, 6).map((a) => (
           <div key={a.id} className="row" style={{ gap: 10, fontSize: 13, padding: "6px 0", borderBottom: "1px solid #F3DCCB" }}>
             <span className="num muted" style={{ width: 42 }}>{a.due.getMonth() + 1}/{a.due.getDate()}</span>
             <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><strong>{a.payee_name}</strong> <span className="muted">{a.item ?? ""}</span></span>
@@ -122,10 +118,10 @@ function Factors({ ctx, cf, lines, budget, budgetLines }: {
         ))}
       </div>
       <div className="stack" style={{ gap: 8, padding: 16, borderRadius: 12, border: "1px solid #E4E2DC" }}>
-        <strong style={{ fontSize: 13 }}>{cf}：相手先別 予算との差（大きい順）</strong>
+        <strong style={{ fontSize: 13 }}>相手先別の予算差</strong>
         {payees.length === 0 ? <span className="muted" style={{ fontSize: 13 }}>差はありません</span> : payees.map((x) => (
           <div key={x.p} className="row" style={{ gap: 10, fontSize: 13, padding: "6px 0", borderBottom: "1px solid #EFEDE8" }}>
-            <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.p || "（区分全体）"}</span>
+            <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.p || "区分全体"}</span>
             <span className="num muted" style={{ fontSize: 12 }}>予算 {yen(x.b)}</span>
             <span className="num" style={{ fontWeight: 700, color: x.d > 0 ? "#9B1C1C" : "#1C6A3E", minWidth: 100, textAlign: "right" }}>{x.d >= 0 ? "+" : ""}{yen(x.d)}</span>
           </div>
