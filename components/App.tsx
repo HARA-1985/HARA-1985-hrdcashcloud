@@ -21,6 +21,8 @@ import Settings from "./screens/Settings";
 import Clients from "./screens/Clients";
 import Billing, { daysLeft } from "./screens/Billing";
 import Admin from "./screens/Admin";
+import Budget from "./screens/Budget";
+import Accounts from "./screens/Accounts";
 import DocViewer from "./DocViewer";
 
 const NAV: [Screen, string][] = [
@@ -36,6 +38,7 @@ const TITLES: Record<Screen, string> = {
   dashboard: "資金繰りダッシュボード", monthly: "月別推移", schedule: "支払予定", invoice: "請求書を登録", expense: "立替経費を登録",
   card: "クレジットカード（マネーフォワード連携）", fb: "FBデータ作成", folders: "書類フォルダ", settings: "設定",
   clients: "顧問先", billing: "プラン・お支払い", admin: "HRD管理（全アカウント）",
+  budget: "予算（入力・予算実績比較・次年度予算案）", accounts: "アカウントと権限",
 };
 
 const store = {
@@ -133,7 +136,7 @@ export default function App() {
     await sb().rpc("bootstrap");
     const [p, c, m, f] = await Promise.all([
       sb().from("profiles").select("id,display_name,email,is_hrd_staff").eq("id", session.user.id).single(),
-      sb().from("companies").select("id,name,name_kana,kind,mf_plan,mf_account_map,trial_ends_at,firm_code,managed_by_firm_id,suspended_at,billing_exempt").order("kind", { ascending: true }).order("name"),
+      sb().from("companies").select("id,name,name_kana,kind,mf_plan,mf_account_map,trial_ends_at,firm_code,managed_by_firm_id,suspended_at,billing_exempt,fiscal_start_month").order("kind", { ascending: true }).order("name"),
       sb().from("memberships").select("company_id,user_id,role").eq("user_id", session.user.id),
       sb().from("firm_clients").select("firm_id,company_id,status,created_at"),
     ]);
@@ -221,8 +224,10 @@ export default function App() {
   // 期限切れのときは業務画面を開かず、お申し込み画面へ
   const view: Screen = expired && !ALWAYS_OPEN.includes(screen) ? "billing" : screen;
   const nav: [Screen, string][] = [
-    ...NAV,
+    ...NAV.slice(0, 2), ["budget", "予算"], ...NAV.slice(2, -1),
     ...(company ? [["clients", company.kind === "client" ? "顧問の会計事務所" : "顧問先"] as [Screen, string]] : []),
+    ...(role === "owner" ? [["accounts", "アカウントと権限"] as [Screen, string]] : []),
+    NAV[NAV.length - 1],
     ...(company && company.kind !== "hrd" ? [["billing", "プラン・お支払い"] as [Screen, string]] : []),
     ...(isHrd ? [["admin", "HRD管理"] as [Screen, string]] : []),
   ];
@@ -344,6 +349,8 @@ export default function App() {
         {ctx && view === "clients" && <Clients ctx={ctx} />}
         {ctx && view === "billing" && <Billing ctx={ctx} />}
         {ctx && view === "admin" && isHrd && <Admin ctx={ctx} />}
+        {ctx && view === "budget" && <Budget ctx={ctx} />}
+        {ctx && view === "accounts" && ctx.isOwner && <Accounts ctx={ctx} />}
       </main>
 
       {ctx && docId && <DocViewer ctx={ctx} docId={docId} onClose={() => setDocId(null)} />}

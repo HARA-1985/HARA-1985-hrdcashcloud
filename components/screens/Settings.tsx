@@ -83,7 +83,8 @@ function CompanySection({ ctx }: { ctx: Ctx }) {
       <h2 className="h2">会社</h2>
       <div style={{ display: "grid", gridTemplateColumns: "140px minmax(0,1fr)", gap: "10px 14px", fontSize: 14 }}>
         <span className="muted">会社名</span><strong>{ctx.company.name}</strong>
-        <span className="muted">区分</span><span>{ctx.company.kind === "hrd" ? "HRD総合事務所（管理側）" : "顧問先"}</span>
+        <span className="muted">区分</span><span>{ctx.company.kind === "hrd" ? "HRD総合事務所（管理側・会計事務所）" : ctx.company.kind === "accounting_firm" ? "会計事務所" : "企業"}</span>
+        <span className="muted">期首月</span><span><FiscalStart ctx={ctx} /></span>
         <span className="muted">MFプラン</span><span>{ctx.company.mf_plan ?? "—"}（クラウドBoxの保存上限はプランにより1,000件）</span>
         <span className="muted">あなたの権限</span><span>{ctx.isHrd ? "HRD管理者（全社）" : ROLE_LABEL[ctx.role]}</span>
       </div>
@@ -94,6 +95,23 @@ function CompanySection({ ctx }: { ctx: Ctx }) {
         </div>
       )}
     </section>
+  );
+}
+
+function FiscalStart({ ctx }: { ctx: Ctx }) {
+  const v = ctx.company.fiscal_start_month ?? 4;
+  async function change(m: number) {
+    const { error } = await sb().from("companies").update({ fiscal_start_month: m }).eq("id", ctx.company.id);
+    if (error) ctx.toast(error.message, true); else { ctx.toast(`期首月を${m}月にしました`); ctx.reloadOrg(); }
+  }
+  if (!ctx.isOwner) return <>{v}月（予算の年度の区切り）</>;
+  return (
+    <span className="row" style={{ gap: 8 }}>
+      <select className="inp" style={{ width: 100, height: 34 }} value={v} onChange={(e) => change(Number(e.target.value))} aria-label="期首月">
+        {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}月</option>)}
+      </select>
+      <span className="muted" style={{ fontSize: 12 }}>予算の年度の区切りに使います</span>
+    </span>
   );
 }
 

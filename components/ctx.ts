@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { AccessStatus, BankAccount, CardTx, Company, Doc, FirmClient, MfConnection, Payee, Payment, Profile, Role } from "@/lib/types";
 
-export type Screen = "dashboard" | "monthly" | "schedule" | "invoice" | "expense" | "card" | "fb" | "folders" | "settings" | "clients" | "billing" | "admin";
+export type Screen = "dashboard" | "monthly" | "schedule" | "invoice" | "expense" | "card" | "fb" | "folders" | "settings" | "clients" | "billing" | "admin" | "budget" | "accounts";
 
 export interface Ctx {
   userId: string;
