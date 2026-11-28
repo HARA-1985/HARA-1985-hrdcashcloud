@@ -2,11 +2,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { sb, supabaseConfigured } from "@/lib/supabase";
-import { KIND_LABEL, type AccessStatus, type BankAccount, type CardTx, type Company, type Doc, type FirmClient, type Membership, type MfConnection, type Payee, type Payment, type Profile, type Role } from "@/lib/types";
+import { KIND_LABEL, isFirmKind, type AccessStatus, type BankAccount, type CardTx, type Company, type Doc, type FirmClient, type Membership, type MfConnection, type Payee, type Payment, type Profile, type Role } from "@/lib/types";
 import { todayLabel } from "@/lib/format";
 import Icon from "./Icon";
 import Login from "./Login";
 import Onboarding from "./Onboarding";
+import type { SignupKind } from "./Login";
+import { MfaChallenge } from "./Mfa";
 import type { Ctx, Screen } from "./ctx";
 import Dashboard from "./screens/Dashboard";
 import Monthly from "./screens/Monthly";
@@ -25,6 +27,8 @@ const NAV: [Screen, string][] = [
   ["dashboard", "ダッシュボード"], ["monthly", "月別推移"], ["schedule", "支払予定"], ["invoice", "請求書"],
   ["expense", "立替経費"], ["card", "クレジットカード"], ["fb", "FBデータ"], ["folders", "書類フォルダ"], ["settings", "設定"],
 ];
+/** 操作がないまま一定時間たったら自動でログアウト（共有PC・席を離れたときの対策） */
+const IDLE_LIMIT_MS = 30 * 60 * 1000;
 /** 期限切れでも開ける画面 */
 const ALWAYS_OPEN: Screen[] = ["billing", "clients", "admin"];
 const ROLE_ORDER: Role[] = ["owner", "approver", "member", "viewer"];
@@ -91,6 +95,7 @@ export default function App() {
   }, [toast]);
 
   /* --- auth --- */
+  const [mfaOk, setMfaOk] = useState<boolean | null>(null);
   useEffect(() => {
     if (!supabaseConfigured()) { setSession(null); return; }
     sb().auth.getSession().then(({ data }) => setSession(data.session));
@@ -98,13 +103,37 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  /* --- 2段階認証：設定済みの人は確認コードを入力するまで先に進めない --- */
+  const checkMfa = useCallback(async () => {
+    if (!session) { setMfaOk(null); return; }
+    const { data } = await sb().auth.mfa.getAuthenticatorAssuranceLevel();
+    setMfaOk(!(data && data.nextLevel === "aal2" && data.currentLevel !== "aal2"));
+  }, [session]);
+  useEffect(() => { checkMfa(); }, [checkMfa]);
+
+  /* --- 一定時間操作がなければ自動ログアウト --- */
+  useEffect(() => {
+    if (!session) return;
+    let last = Date.now();
+    const touch = () => { last = Date.now(); };
+    const evs = ["mousemove", "keydown", "pointerdown", "scroll", "touchstart"];
+    evs.forEach((e) => window.addEventListener(e, touch, { passive: true }));
+    const timer = setInterval(async () => {
+      if (Date.now() - last > IDLE_LIMIT_MS) {
+        await sb().auth.signOut();
+        window.alert("30分間操作がなかったため、安全のためログアウトしました。");
+      }
+    }, 60 * 1000);
+    return () => { evs.forEach((e) => window.removeEventListener(e, touch)); clearInterval(timer); };
+  }, [session]);
+
   /* --- 所属会社の読み込み --- */
   const loadOrg = useCallback(async () => {
-    if (!session) return;
+    if (!session || !mfaOk) return;
     await sb().rpc("bootstrap");
     const [p, c, m, f] = await Promise.all([
       sb().from("profiles").select("id,display_name,email,is_hrd_staff").eq("id", session.user.id).single(),
-      sb().from("companies").select("id,name,name_kana,kind,mf_plan,mf_account_map,trial_ends_at,firm_code,managed_by_firm_id").order("kind", { ascending: true }).order("name"),
+      sb().from("companies").select("id,name,name_kana,kind,mf_plan,mf_account_map,trial_ends_at,firm_code,managed_by_firm_id,suspended_at,billing_exempt").order("kind", { ascending: true }).order("name"),
       sb().from("memberships").select("company_id,user_id,role").eq("user_id", session.user.id),
       sb().from("firm_clients").select("firm_id,company_id,status,created_at"),
     ]);
@@ -122,7 +151,7 @@ export default function App() {
     const usable = prof?.is_hrd_staff ? all : all.filter((x) => mine.has(x.id) || links.some((l) => l.status === "active" && l.company_id === x.id && mine.has(l.firm_id)));
     const saved = store.get("hrd.cid");
     setCid((cur) => (cur && usable.some((x) => x.id === cur) ? cur : saved && usable.some((x) => x.id === saved) ? saved : usable[0]?.id ?? null));
-  }, [session]);
+  }, [session, mfaOk]);
   useEffect(() => { loadOrg(); }, [loadOrg]);
 
   /* --- 会社のデータ --- */
@@ -176,7 +205,7 @@ export default function App() {
     }
     return cand.sort((a, b) => ROLE_ORDER.indexOf(a) - ROLE_ORDER.indexOf(b))[0] ?? null;
   }, [isHrd, members, firmClients, cid]);
-  const expired = !isHrd && access === "expired";
+  const expired = !isHrd && (access === "expired" || access === "suspended");
   const selectCompany = useCallback((id: string) => { setCid(id); setScreen("dashboard"); }, []);
 
   const ctx: Ctx | null = useMemo(() => {
@@ -199,13 +228,37 @@ export default function App() {
   ];
   const title = view === "clients" && company?.kind === "client" ? "顧問の会計事務所" : TITLES[view];
 
+  // 会社切り替えメニューのグループ：自分の事務所・自社 → 事務所ごとの顧問先 → その他（HRD管理者のみ）
+  const groups = (() => {
+    const firmIds = new Set(switchable.filter((c) => isFirmKind(c.kind) && (mySet.has(c.id) || isHrd)).map((c) => c.id));
+    const used = new Set<string>();
+    const out: { label: string; items: Company[] }[] = [];
+    const own = switchable.filter((c) => mySet.has(c.id) || (isHrd && c.kind === "hrd"));
+    own.forEach((c) => used.add(c.id));
+    if (own.length) out.push({ label: "自分の事務所・会社", items: own });
+    for (const fid of firmIds) {
+      const firm = switchable.find((c) => c.id === fid);
+      const items = switchable.filter((c) => !used.has(c.id) && firmClients.some((l) => l.status === "active" && l.firm_id === fid && l.company_id === c.id));
+      items.forEach((c) => used.add(c.id));
+      if (items.length) out.push({ label: `${firm?.name ?? "会計事務所"}の顧問先`, items });
+    }
+    const rest = switchable.filter((c) => !used.has(c.id));
+    if (rest.length) out.push({ label: "その他のアカウント", items: rest });
+    return out;
+  })();
+
   if (!supabaseConfigured()) {
     return <div className="login-wrap"><div className="login"><h1 style={{ fontSize: 20 }}>設定が必要です</h1><p className="muted">環境変数 NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。</p></div></div>;
   }
   if (session === undefined) return <div className="login-wrap" aria-busy="true" />;
   if (!session) return <Login />;
+  if (mfaOk === null) return <div className="login-wrap" aria-busy="true" />;
+  if (!mfaOk) return <MfaChallenge onVerified={() => { setMfaOk(true); }} onSignOut={() => sb().auth.signOut()} />;
   if (orgLoaded && !isHrd && switchable.length === 0) {
-    return <Onboarding onDone={async (id) => { await loadOrg(); setCid(id); setScreen("dashboard"); toast("登録しました。30日間無料でお使いいただけます"); }} onSignOut={() => sb().auth.signOut()} />;
+    const k = session.user.user_metadata?.signup_kind;
+    return <Onboarding initialKind={k === "client" || k === "accounting_firm" ? (k as SignupKind) : null}
+      onDone={async (id, msg) => { await loadOrg(); setCid(id); setScreen(k === "accounting_firm" ? "clients" : "dashboard"); toast(msg); }}
+      onSignOut={() => sb().auth.signOut()} />;
   }
 
   const wait = payments.filter((p) => p.status === "pending").length;
@@ -217,14 +270,18 @@ export default function App() {
           <div className="logo">HRD</div>
           <div className="stack" style={{ gap: 2 }}>
             <span style={{ fontSize: 14, fontWeight: 700 }}>HRD資金繰りクラウド</span>
-            <span style={{ fontSize: 11, color: "#A9ACB4" }}>{isHrd ? "HRD管理者" : company ? KIND_LABEL[company.kind] : ""}</span>
+            <span style={{ fontSize: 11, color: "#A9ACB4" }}>{isHrd ? "マスター管理者（HRD総合事務所）" : company ? KIND_LABEL[company.kind] : ""}</span>
           </div>
         </div>
         {switchable.length > 0 && (
           <label className="stack" style={{ gap: 6 }}>
             <span style={{ fontSize: 11, color: "#A9ACB4", padding: "0 4px" }}>会社</span>
             <select className="co-select" value={cid ?? ""} onChange={(e) => { setCid(e.target.value); setScreen("dashboard"); }}>
-              {switchable.map((c) => <option key={c.id} value={c.id}>{c.kind === "hrd" ? "★ " : c.kind === "accounting_firm" ? "◆ " : ""}{c.name}</option>)}
+              {groups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.items.map((c) => <option key={c.id} value={c.id}>{c.kind === "hrd" ? "★ " : c.kind === "accounting_firm" ? "◆ " : ""}{c.name}{c.suspended_at ? "（停止中）" : ""}</option>)}
+                </optgroup>
+              ))}
             </select>
           </label>
         )}

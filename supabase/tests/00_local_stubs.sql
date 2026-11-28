@@ -43,3 +43,9 @@ alter table storage.objects enable row level security;
 create function storage.foldername(name text) returns text[] language sql immutable as $$
   select string_to_array(name, '/')
 $$;
+
+create function auth.jwt() returns jsonb language sql stable as $$
+  select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb
+$$;
+alter table auth.users add column if not exists created_at timestamptz default now(), add column if not exists last_sign_in_at timestamptz;
+create table auth.mfa_factors (id uuid primary key default gen_random_uuid(), user_id uuid references auth.users(id) on delete cascade, status text not null default 'unverified');

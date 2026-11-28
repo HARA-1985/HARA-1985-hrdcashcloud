@@ -53,7 +53,7 @@ function FirmClients({ ctx }: { ctx: Ctx }) {
 
   return (
     <div className="stack" style={{ gap: 20 }}>
-      {isFirm && ctx.company.firm_code && (
+      {ctx.company.firm_code && (
         <section className="card pad stack" style={{ gap: 12 }}>
           <h2 className="h2">事務所コード</h2>
           <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.7 }}>

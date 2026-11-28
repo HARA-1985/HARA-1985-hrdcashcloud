@@ -165,4 +165,61 @@ do $$ begin
 exception when insufficient_privilege then raise notice 'ok - service 用の関数はログインユーザーから呼べない'; end $$;
 reset role;
 
+
+-- ===== 管理機能・セキュリティ（20261128140000） =====
+create table t.hrdcode as select firm_code as code from public.companies where kind = 'hrd';
+grant select on t.hrdcode to public;
+select t.ok((select code from t.hrdcode) is not null, 'HRD総合事務所にも事務所コードがある');
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false);
+insert into t.ids values ('y3', public.register_account('client', '3社目'));
+select public.company_link_firm(t.id('y3'), (select code from t.hrdcode));
+select t.ok(public.access_status(t.id('y3')) = 'covered_by_firm', '企業はHRDの事務所コードでHRDの顧問先になれる（以後HRDの契約でカバー）');
+do $$ begin
+  perform public.company_link_firm(t.id('firm'), (select code from t.hrdcode));
+  raise exception 'FAIL: 会計事務所を顧問先にできた';
+exception when insufficient_privilege or raise_exception then
+  if sqlerrm like 'FAIL%' then raise; end if; raise notice 'ok - 会計事務所アカウントは顧問先としてつなげない'; end $$;
+reset role;
+
+-- 利用停止
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
+select public.admin_set_suspended(t.id('x'), true, '不正利用の疑い');
+reset role;
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000c2', false);
+select t.ok(public.access_status(t.id('x')) = 'suspended', '停止中の会社は「利用停止」と表示');
+select t.ok((select count(*) from public.payments where company_id = t.id('x')) = 0, '停止中の会社は事務所の契約があってもデータを使えない');
+reset role;
+select t.ok((select usable from public.svc_company_role(t.id('x'), '00000000-0000-0000-0000-0000000000f2')) is not true, 'API：停止中の会社は事務所スタッフも使えない');
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
+select public.admin_set_suspended(t.id('x'), false);
+select public.admin_set_billing_exempt(t.id('y2'), true);
+select t.ok((select count(*) from public.admin_list_users()) = 6, 'HRD管理者は全ユーザーを一覧できる');
+select t.ok((select count(*) from public.admin_audit_logs(50)) > 0, 'HRD管理者は全体の操作ログを見られる');
+reset role;
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false);
+select t.ok(public.access_status(t.id('y2')) = 'active', '無料扱いにした会社は契約中と同じく使える');
+reset role;
+
+-- 最後のオーナー
+do $$ begin
+  delete from public.memberships where company_id = t.id('y2') and role = 'owner';
+  raise exception 'FAIL: 最後のオーナーを削除できた';
+exception when raise_exception then
+  if sqlerrm like 'FAIL%' then raise; end if; raise notice 'ok - 最後のオーナーは削除・降格できない'; end $$;
+select t.ok((select count(*) from public.firm_clients) > 0 and (select count(*) from public.audit_logs where table_name = 'firm_clients') > 0, '顧問関係の変更が操作ログに残る');
+
+-- 2段階認証
+insert into auth.mfa_factors(user_id, status) values ('00000000-0000-0000-0000-00000000000a', 'verified');
+set role authenticated; select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
+select set_config('request.jwt.claims', '{"aal":"aal1"}', false);
+select t.ok((select count(*) from public.payments) = 0, '2段階認証を設定したHRD管理者は、未認証のセッションでは管理者権限が無効');
+do $$ begin
+  perform public.admin_list_accounts();
+  raise exception 'FAIL: 未認証で管理機能を使えた';
+exception when insufficient_privilege then raise notice 'ok - 未認証のセッションでは管理機能を使えない'; end $$;
+select set_config('request.jwt.claims', '{"aal":"aal2"}', false);
+select t.ok((select count(*) from public.payments) >= 2, '2段階認証済みのセッションでは管理者権限が有効');
+select set_config('request.jwt.claims', '', false);
+reset role;
+
 \echo '=== ALL TESTS PASSED ==='

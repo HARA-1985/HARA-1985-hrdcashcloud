@@ -56,7 +56,13 @@ export default function Billing({ ctx }: { ctx: Ctx }) {
       {/* 現在の状態 */}
       <section className={ctx.access === "expired" ? "kpi-dark" : "card pad stack"} style={{ gap: 10 }}>
         <span className="lbl" style={{ color: ctx.access === "expired" ? "#A9ACB4" : undefined }}>現在のご利用状況</span>
-        {ctx.access === "active" && <strong style={{ fontSize: 22 }}>{STATUS_TEXT[sub?.status ?? "active"]}</strong>}
+        {ctx.access === "suspended" && (
+          <>
+            <strong style={{ fontSize: 22, color: "#9B1C1C" }}>このアカウントは利用停止中です</strong>
+            <span className="muted" style={{ fontSize: 14, lineHeight: 1.8 }}>データはそのまま保管されています。詳しくはHRD総合事務所までお問い合わせください。</span>
+          </>
+        )}
+        {ctx.access === "active" && <strong style={{ fontSize: 22 }}>{ctx.company.billing_exempt ? "ご利用中（無料提供）" : STATUS_TEXT[sub?.status ?? "active"]}</strong>}
         {ctx.access === "trial" && <strong style={{ fontSize: 22 }}>無料期間中：あと <span className="num" style={{ color: "#2236B8" }}>{left}</span> 日</strong>}
         {ctx.access === "covered_by_firm" && <strong style={{ fontSize: 22 }}>顧問の会計事務所のご契約でご利用中です</strong>}
         {ctx.access === "expired" && (
@@ -76,7 +82,7 @@ export default function Billing({ ctx }: { ctx: Ctx }) {
       </section>
 
       {/* プラン */}
-      {ctx.access !== "covered_by_firm" && plan && (
+      {ctx.access !== "covered_by_firm" && ctx.access !== "suspended" && !ctx.company.billing_exempt && plan && (
         <section className="card pad stack" style={{ gap: 16 }}>
           <div className="row wrap" style={{ gap: 12, justifyContent: "space-between" }}>
             <div className="stack" style={{ gap: 4 }}>
