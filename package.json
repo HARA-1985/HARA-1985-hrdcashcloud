@@ -18,6 +18,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "server-only": "^0.0.1",
+    "stripe": "^17.7.0",
     "unpdf": "^1.9.1",
     "zengin-code": "^1.0.0-p20260824"
   },

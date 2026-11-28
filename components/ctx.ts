@@ -1,12 +1,18 @@
 import type { Dispatch, SetStateAction } from "react";
-import type { BankAccount, CardTx, Company, Doc, MfConnection, Payee, Payment, Profile, Role } from "@/lib/types";
+import type { AccessStatus, BankAccount, CardTx, Company, Doc, FirmClient, MfConnection, Payee, Payment, Profile, Role } from "@/lib/types";
 
-export type Screen = "dashboard" | "monthly" | "schedule" | "invoice" | "expense" | "card" | "fb" | "folders" | "settings";
+export type Screen = "dashboard" | "monthly" | "schedule" | "invoice" | "expense" | "card" | "fb" | "folders" | "settings" | "clients" | "billing" | "admin";
 
 export interface Ctx {
   userId: string;
   me: Profile | null;
   company: Company;
+  /** 自分が見られる会社（顧問先・つながっている会計事務所を含む） */
+  companies: Company[];
+  firmClients: FirmClient[];
+  /** 無料期間・サブスクの状態（HRD管理者は常に利用可） */
+  access: AccessStatus | null;
+  selectCompany: (id: string) => void;
   role: Role;
   isHrd: boolean;
   canWrite: boolean;

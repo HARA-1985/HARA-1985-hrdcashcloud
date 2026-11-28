@@ -17,12 +17,14 @@ export async function authorize(req: Request, companyId: string | undefined) {
   const { data: u, error } = await admin.auth.getUser(token);
   if (error || !u.user) return { error: "ログインの有効期限が切れています", status: 401 as const };
   if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return { error: "会社の指定が不正です", status: 400 as const };
-  const [{ data: prof }, { data: mem }] = await Promise.all([
+  const [{ data: prof }, { data: acc }] = await Promise.all([
     admin.from("profiles").select("is_hrd_staff").eq("id", u.user.id).single(),
-    admin.from("memberships").select("role").eq("company_id", companyId).eq("user_id", u.user.id).maybeSingle(),
+    // 直接の所属 または 会計事務所経由の所属の役割と、無料期間・サブスクで今使えるか
+    admin.rpc("svc_company_role", { p_company: companyId, p_user: u.user.id }).maybeSingle<{ role: string; usable: boolean }>(),
   ]);
-  const role = prof?.is_hrd_staff ? "owner" : (mem?.role as string | undefined);
-  return { admin, user: u.user, role, isHrd: !!prof?.is_hrd_staff };
+  if (prof?.is_hrd_staff) return { admin, user: u.user, role: "owner" as string | undefined, isHrd: true };
+  if (acc && !acc.usable) return { error: "無料期間が終了しています。プランのお申し込み後にご利用いただけます", status: 402 as const };
+  return { admin, user: u.user, role: acc?.role as string | undefined, isHrd: false };
 }
 
 export const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -40,4 +42,21 @@ export async function payeeDefaults(admin: NonNullable<ReturnType<typeof adminCl
     m.set(p.payee_name, cur);
   }
   return m;
+}
+
+/** 課金の手続き用：会社のオーナー（直接の所属）か HRD 管理者かを確認する。期限切れでも通す */
+export async function authorizeOwner(req: Request, companyId: string | undefined) {
+  const admin = adminClient();
+  if (!admin) return { error: "サーバーの設定（SUPABASE_SERVICE_ROLE_KEY）が未完了です", status: 503 as const };
+  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!token) return { error: "ログインが必要です", status: 401 as const };
+  const { data: u, error } = await admin.auth.getUser(token);
+  if (error || !u.user) return { error: "ログインの有効期限が切れています", status: 401 as const };
+  if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return { error: "会社の指定が不正です", status: 400 as const };
+  const [{ data: prof }, { data: mem }] = await Promise.all([
+    admin.from("profiles").select("is_hrd_staff").eq("id", u.user.id).single(),
+    admin.from("memberships").select("role").eq("company_id", companyId).eq("user_id", u.user.id).maybeSingle(),
+  ]);
+  if (!prof?.is_hrd_staff && mem?.role !== "owner") return { error: "お申し込み・お支払いの手続きはオーナーのみできます", status: 403 as const };
+  return { admin, user: u.user };
 }

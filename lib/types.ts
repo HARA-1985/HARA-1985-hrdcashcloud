@@ -4,7 +4,17 @@ export type Source = "invoice" | "expense" | "card" | "manual";
 export type PayStatus = "pending" | "approved" | "auto_debit" | "paid" | "cancelled";
 
 export interface MfAccountMap { titles?: Record<string, string>; banks?: Record<string, string> }
-export interface Company { id: string; name: string; name_kana: string | null; kind: "hrd" | "client"; mf_plan: string | null; mf_account_map?: MfAccountMap | null }
+export type CompanyKind = "hrd" | "accounting_firm" | "client";
+export interface Company {
+  id: string; name: string; name_kana: string | null; kind: CompanyKind; mf_plan: string | null; mf_account_map?: MfAccountMap | null;
+  trial_ends_at?: string | null; firm_code?: string | null; managed_by_firm_id?: string | null;
+}
+export interface FirmClient { firm_id: string; company_id: string; status: "active" | "revoked"; created_at?: string }
+/** active：サブスク契約中／trial：無料期間中／covered_by_firm：会計事務所の契約で利用中／expired：期限切れ */
+export type AccessStatus = "active" | "trial" | "covered_by_firm" | "expired";
+export interface Plan { code: string; company_kind: "accounting_firm" | "client"; name: string; monthly_price_jpy: number; per_client_price_jpy: number; stripe_price_id: string | null }
+export interface Subscription { company_id: string; plan_code: string | null; status: string; current_period_end: string | null; cancel_at_period_end: boolean; client_quantity: number }
+export const KIND_LABEL: Record<CompanyKind, string> = { hrd: "HRD総合事務所", accounting_firm: "会計事務所", client: "企業" };
 export interface Profile { id: string; display_name: string | null; email: string | null; is_hrd_staff: boolean }
 export interface Membership { company_id: string; user_id: string; role: Role }
 
