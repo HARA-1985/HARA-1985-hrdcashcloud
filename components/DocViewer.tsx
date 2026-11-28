@@ -55,7 +55,7 @@ export default function DocViewer({ ctx, docId, onClose }: { ctx: Ctx; docId: st
               /{doc?.folder_month ? ymLabel(parseDate(doc.folder_month)) : "未仕分け"}/{doc?.account_title ?? "未設定"}/
             </span>
             <span className="muted">MF クラウドBox</span>
-            <span>{doc?.mf_box_status === "stored" ? "保存済" : doc?.mf_box_status === "failed" ? "保存に失敗" : "保存待ち（連携後に自動保存）"}</span>
+            <span>{doc?.mf_box_status === "stored" ? "保存済" : doc?.mf_box_status === "failed" ? "保存に失敗" : "保存待ち"}</span>
           </div>
           {url && <a className="btn btn-primary" href={url} target="_blank" rel="noreferrer" style={{ marginTop: "auto" }}>新しいタブで開く</a>}
           {!url && doc?.mf_box_file_id && <a className="btn btn-primary" href={`https://box.moneyforward.com/files/${doc.mf_box_file_id}`} target="_blank" rel="noopener noreferrer" style={{ marginTop: "auto" }}>クラウドBoxで原本を開く</a>}

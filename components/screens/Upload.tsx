@@ -136,20 +136,19 @@ export default function Upload({ ctx, mode }: { ctx: Ctx; mode: "invoice" | "exp
         </div>
         <span style={{ fontSize: 20, fontWeight: 700 }}>{isExp ? "領収書・レシートをドロップ" : "請求書をドロップ"}</span>
         <span className="muted" style={{ fontSize: 14, maxWidth: 380, lineHeight: 1.7 }}>
-          {isExp ? "画像やPDFをまとめて置くだけ。内容を確認して精算の支払予定を作ります。" : "PDFを置くだけ。内容を確認して支払予定を作り、月別・勘定科目別のフォルダに仕分けます。"}
+          {isExp ? "画像・PDFをドロップ" : "PDFをドロップ"}
         </span>
         <span className="btn" style={{ pointerEvents: "none" }}>ファイルを選択</span>
         <input ref={inputRef} className="sr" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.heic,.webp" onChange={(e) => { handle(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <span className="muted" style={{ fontSize: 12 }}>PDF・JPG・PNG・HEIC ／ 1ファイル20MBまで ／ 複数同時OK</span>
+        <span className="muted" style={{ fontSize: 12 }}>PDF・JPG・PNG・HEIC（20MBまで）</span>
         {uploading > 0 && <span className="chip st-wait">アップロード中 {uploading}件…</span>}
       </label>
 
       <section className="card pad stack" style={{ gap: 14, minHeight: 340 }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h2 className="h2">内容の確認</h2>
-          <span className="muted" style={{ fontSize: 12 }}>自動読み取り（AI-OCR）は次の段階で追加</span>
         </div>
-        {drafts.length === 0 && <div className="empty">ファイルを置くと、ここで支払先・金額・支払日を確認して登録できます。</div>}
+        {drafts.length === 0 && <div className="empty">ファイルを置くと、ここに表示されます</div>}
         {(() => {
           const ready = drafts.filter((d) => !d.saved && !d.saving && !d.reading && d.payee.trim() && Number(d.amount.replace(/[^\d]/g, "")) > 0 && d.due);
           return ready.length > 1 ? (
@@ -286,7 +285,7 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
     let okN = 0, blockedN = 0, ngN = 0; let firstErr = "";
     for (let i = 0; i < ids.length; i += 10) {
       const batch = ids.slice(i, i + 10);
-      setProgress(`取り込み中… ${Math.min(i + batch.length, ids.length)} / ${ids.length}件（請求書の内容も読み取っています）`);
+      setProgress(`取り込み中… ${Math.min(i + batch.length, ids.length)} / ${ids.length}件`);
       const { ok, j } = await call("/api/mf/box/import", { companyId: ctx.company.id, fileIds: batch, docType });
       if (!ok) { firstErr = j.error ?? "取り込めませんでした"; ngN += ids.length - i; break; }
       const res = (j.results ?? []) as ImportResult[];
@@ -329,10 +328,7 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
         <>
           {!folderSupported && (
             <div className="stack" style={{ gap: 8, padding: 12, borderRadius: 10, background: "#FFF8F3", border: "1px solid #F0C9AE", fontSize: 13, lineHeight: 1.7 }}>
-              <span>クラウドBox APIの一覧にフォルダの情報が含まれていないため、フォルダ別に表示できません。Boxの書類をすべて新しい順に表示しています（上の検索欄で絞り込めます）。</span>
-              <details><summary style={{ cursor: "pointer" }}>APIが返した項目（値は含みません）</summary>
-                <pre style={{ fontSize: 11, whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{fields.join("\n")}</pre>
-              </details>
+              <span>新しい順に表示しています</span>
             </div>
           )}
 
@@ -431,11 +427,10 @@ function BoxImport({ ctx, docType, onImported, onManual }: { ctx: Ctx; docType: 
                   <button type="button" className="btn btn-primary" disabled={busy} onClick={() => importIds([...picked])}>{busy ? "取り込み中…" : `選んだ${picked.size}件を取り込む`}</button>
                 )}
               </div>
-              {truncated && <p className="muted" style={{ fontSize: 12, margin: 0 }}>Boxのファイルが多いため、新しいものから一部のみ読み込んでいます。</p>}
+              {truncated && <p className="muted" style={{ fontSize: 12, margin: 0 }}>新しい順に一部を表示しています</p>}
             </>
           )}
           {progress && <span className="chip st-wait" style={{ alignSelf: "flex-start", height: "auto", padding: "6px 10px" }}>{progress}</span>}
-          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>取り込むと支払先・金額・支払期限を自動で読み取り、右の「内容の確認」に入ります。Boxは読み取りのみで、Box側のファイルは変更・削除しません。マネーフォワードの他サービスから保存されたファイルはAPIで取り出せないため、行の「Boxで開く」「ファイルを置く」で取り込みます。</p>
         </>
       )}
     </section>
@@ -487,7 +482,7 @@ function BoxListImport({ ctx }: { ctx: Ctx }) {
       </div>
       {open && (
         <>
-          <p className="muted" style={{ fontSize: 13, margin: 0, lineHeight: 1.7 }}>ファイル名の【1126振替】【1130振込】と（金額）から、振替日・支払先・金額を読み取って支払予定を作ります。1行に「BoxファイルID|フォルダ名|ファイル名」の形で貼り付けてください。同じファイルは二重に登録されません。</p>
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>形式：BoxファイルID|フォルダ名|ファイル名（1行1件）</p>
           <label htmlFor="boxlist" className="sr">Boxのファイル一覧</label>
           <textarea id="boxlist" className="inp" style={{ minHeight: 120, fontSize: 12, fontFamily: "ui-monospace, monospace" }} value={text} onChange={(e) => setText(e.target.value)} placeholder="01a1df9a-3986-…|引落|_【1126振替】ヤマト運輸請求書-01_20261031(14460)人形町.pdf" />
           <div className="row wrap" style={{ gap: 10 }}>
@@ -555,7 +550,7 @@ function ManualListImport({ ctx }: { ctx: Ctx }) {
       </div>
       {open && (
         <>
-          <p className="muted" style={{ fontSize: 13, margin: 0, lineHeight: 1.7 }}>口座引落・税金・社会保険料・借入返済・給与など、請求書のない支払を登録します。1行に「日付・支払先・内容・金額・区分（固定/臨時）・方法（引落/振込）」をタブ区切りで貼り付けてください。同じ日付・支払先・金額のものは二重に登録されません。</p>
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>形式：日付⇥支払先⇥内容⇥金額⇥固定/臨時⇥引落/振込（1行1件）</p>
           <label htmlFor="manuallist" className="sr">支払の一覧</label>
           <textarea id="manuallist" className="inp" style={{ minHeight: 120, fontSize: 12, fontFamily: "ui-monospace, monospace" }} value={text} onChange={(e) => setText(e.target.value)} placeholder={"2026-10-15\t日本政策金融公庫\t借入返済\t452287\t固定\t引落"} />
           {rows.length > 0 && (
@@ -625,10 +620,9 @@ function AccountTitleEditor({ ctx }: { ctx: Ctx }) {
     <section className="card pad stack" style={{ gap: 12 }}>
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
         <div className="stack" style={{ gap: 2 }}>
-          <h2 className="h2">勘定科目・支出項目（営業CF／投資CF／財務CF）</h2>
-          <span className="muted" style={{ fontSize: 12 }}>支払先ごとに 買掛金・未払金 と 支出項目 を選べます。選んだ支出項目は、その支払先の今後の支払にも引き継がれ、ダッシュボードのキャッシュフロー区分に反映されます</span>
+          <h2 className="h2">勘定科目・支出項目</h2>
         </div>
-        <button type="button" className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{open ? "閉じる" : `開く（${groups.length}社・買掛金 ${nAp}社・投資/財務 ${nNonOp}社）`}</button>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{open ? "閉じる" : "開く"}</button>
       </div>
       {open && (
         <>

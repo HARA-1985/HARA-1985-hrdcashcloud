@@ -7,7 +7,7 @@ import type { Plan, Subscription } from "@/lib/types";
 
 const yen = (n: number) => n.toLocaleString("ja-JP");
 const STATUS_TEXT: Record<string, string> = {
-  active: "ご契約中", trialing: "ご契約中（課金開始前）", past_due: "お支払いの確認中", canceled: "解約済み",
+  active: "ご契約中", trialing: "ご契約中", past_due: "お支払いの確認中", canceled: "解約済み",
   unpaid: "未払い", incomplete: "お申し込み手続き中", incomplete_expired: "お申し込みが完了しませんでした", paused: "一時停止中",
 };
 
@@ -47,69 +47,36 @@ export default function Billing({ ctx }: { ctx: Ctx }) {
   const subscribed = !!sub && ["active", "trialing", "past_due"].includes(sub.status);
   const monthly = plan ? plan.monthly_price_jpy + (isFirm ? plan.per_client_price_jpy * clients : 0) : 0;
 
-  if (ctx.company.kind === "hrd") {
-    return <section className="card pad"><p style={{ margin: 0 }}>HRD総合事務所はお申し込み不要です。</p></section>;
-  }
+  if (ctx.company.kind === "hrd") return null;
+
+  const status =
+    ctx.access === "suspended" ? "利用停止中"
+    : ctx.access === "active" ? (ctx.company.billing_exempt ? "ご利用中" : STATUS_TEXT[sub?.status ?? "active"])
+    : ctx.access === "trial" ? `無料期間　残り${left}日`
+    : ctx.access === "covered_by_firm" ? "会計事務所のプランでご利用中"
+    : "無料期間終了";
+  const date = ctx.access === "trial" && ctx.company.trial_ends_at ? `${new Date(ctx.company.trial_ends_at).toLocaleDateString("ja-JP")}まで`
+    : subscribed && sub?.current_period_end ? `${sub.cancel_at_period_end ? "解約予定" : "次回更新"} ${new Date(sub.current_period_end).toLocaleDateString("ja-JP")}` : "";
+  const showPlan = ctx.access !== "covered_by_firm" && ctx.access !== "suspended" && !ctx.company.billing_exempt && plan;
 
   return (
-    <div className="stack" style={{ gap: 20 }}>
-      {/* 現在の状態 */}
-      <section className={ctx.access === "expired" ? "kpi-dark" : "card pad stack"} style={{ gap: 10 }}>
-        <span className="lbl" style={{ color: ctx.access === "expired" ? "#A9ACB4" : undefined }}>現在のご利用状況</span>
-        {ctx.access === "suspended" && (
-          <>
-            <strong style={{ fontSize: 22, color: "#9B1C1C" }}>このアカウントは利用停止中です</strong>
-            <span className="muted" style={{ fontSize: 14, lineHeight: 1.8 }}>データはそのまま保管されています。詳しくはHRD総合事務所までお問い合わせください。</span>
-          </>
-        )}
-        {ctx.access === "active" && <strong style={{ fontSize: 22 }}>{ctx.company.billing_exempt ? "ご利用中（無料提供）" : STATUS_TEXT[sub?.status ?? "active"]}</strong>}
-        {ctx.access === "trial" && <strong style={{ fontSize: 22 }}>無料期間中：あと <span className="num" style={{ color: "#2236B8" }}>{left}</span> 日</strong>}
-        {ctx.access === "covered_by_firm" && <strong style={{ fontSize: 22 }}>顧問の会計事務所のご契約でご利用中です</strong>}
-        {ctx.access === "expired" && (
-          <>
-            <strong style={{ fontSize: 22 }}>無料期間が終了しました</strong>
-            <span style={{ fontSize: 14, lineHeight: 1.8, color: "#C9CBD1" }}>登録いただいたデータはそのまま残っています。プランをお申し込みいただくと、すぐに続きからご利用いただけます。</span>
-          </>
-        )}
-        {ctx.access === "trial" && ctx.company.trial_ends_at && (
-          <span className="muted" style={{ fontSize: 13 }}>無料期間の終了日：{new Date(ctx.company.trial_ends_at).toLocaleDateString("ja-JP")}</span>
-        )}
-        {subscribed && sub?.current_period_end && (
-          <span className="muted" style={{ fontSize: 13 }}>
-            {sub.cancel_at_period_end ? "解約予定日" : "次回の更新日"}：{new Date(sub.current_period_end).toLocaleDateString("ja-JP")}
-          </span>
-        )}
-      </section>
-
-      {/* プラン */}
-      {ctx.access !== "covered_by_firm" && ctx.access !== "suspended" && !ctx.company.billing_exempt && plan && (
-        <section className="card pad stack" style={{ gap: 16 }}>
-          <div className="row wrap" style={{ gap: 12, justifyContent: "space-between" }}>
-            <div className="stack" style={{ gap: 4 }}>
-              <span className="lbl">{plan.name}</span>
-              <span style={{ fontSize: 32, fontWeight: 700 }} className="num">¥{yen(monthly)}<span style={{ fontSize: 14, fontWeight: 500 }} className="muted"> ／月（税別）</span></span>
-              {isFirm && (
-                <span className="muted" style={{ fontSize: 13 }}>
-                  基本料 ¥{yen(plan.monthly_price_jpy)} ＋ 顧問先 {clients}社 × ¥{yen(plan.per_client_price_jpy)}
-                </span>
-              )}
-            </div>
-            {!ctx.isOwner ? (
-              <span className="muted" style={{ fontSize: 13 }}>お申し込みはオーナーの方が行えます</span>
-            ) : subscribed ? (
-              <button type="button" className="btn" disabled={busy} onClick={() => go("/api/billing/portal")}>お支払い方法の変更・解約</button>
-            ) : (
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => go("/api/billing/checkout")}>{busy ? "移動中…" : "プランを申し込む"}</button>
-            )}
+    <section className="card pad stack" style={{ gap: 20, maxWidth: 720 }}>
+      <div className="stack" style={{ gap: 4 }}>
+        <strong style={{ fontSize: 22, color: ctx.access === "expired" || ctx.access === "suspended" ? "#9B1C1C" : undefined }}>{status}</strong>
+        {date && <span className="muted num" style={{ fontSize: 13 }}>{date}</span>}
+      </div>
+      {showPlan && (
+        <div className="row wrap" style={{ gap: 16, justifyContent: "space-between", paddingTop: 20, borderTop: "1px solid #EFEDE8" }}>
+          <div className="stack" style={{ gap: 4 }}>
+            <span className="lbl">{plan.name}</span>
+            <span className="num" style={{ fontSize: 30, fontWeight: 700 }}>¥{yen(monthly)}<span className="muted" style={{ fontSize: 13, fontWeight: 500 }}> ／月（税別）</span></span>
+            {isFirm && <span className="muted num" style={{ fontSize: 12 }}>基本 ¥{yen(plan.monthly_price_jpy)} ＋ 顧問先 {clients}社 × ¥{yen(plan.per_client_price_jpy)}</span>}
           </div>
-          <ul className="muted" style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.9 }}>
-            <li>お支払いはクレジットカード（Stripe の安全な決済画面）で行います。</li>
-            {ctx.access === "trial" && <li>無料期間中にお申し込みいただいても、課金は無料期間の終了後に始まります。</li>}
-            {isFirm && <li>顧問先の数が変わると、翌月以降の金額に自動で反映されます（日割り）。</li>}
-            <li>いつでも解約できます。解約後も期間の終わりまでご利用いただけます。</li>
-          </ul>
-        </section>
+          {ctx.isOwner && (subscribed
+            ? <button type="button" className="btn" disabled={busy} onClick={() => go("/api/billing/portal")}>お支払い設定</button>
+            : <button type="button" className="btn btn-primary" disabled={busy} onClick={() => go("/api/billing/checkout")}>{busy ? "移動中…" : "申し込む"}</button>)}
+        </div>
       )}
-    </div>
+    </section>
   );
 }

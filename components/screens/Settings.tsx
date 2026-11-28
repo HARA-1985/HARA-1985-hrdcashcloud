@@ -42,14 +42,13 @@ export default function Settings({ ctx }: { ctx: Ctx }) {
   return (
     <div className="stack" style={{ gap: 20 }}>
       <CompanySection ctx={ctx} />
-      {ctx.isHrd && <NewClient ctx={ctx} />}
       <BanksSection ctx={ctx} />
       <PayeesSection ctx={ctx} />
       <MembersSection ctx={ctx} members={members} onChange={loadSide} />
       <MfSection ctx={ctx} />
       <MfaSettings toast={ctx.toast} required={!!ctx.me?.is_hrd_staff} />
       <section className="card scroll-x">
-        <div style={{ padding: "18px 22px 8px" }}><h2 className="h2">操作ログ（最新30件）</h2></div>
+        <div style={{ padding: "18px 22px 8px" }}><h2 className="h2">操作ログ</h2></div>
         {logs.length === 0 ? <div className="empty">まだ操作の記録はありません</div> : (
           <table className="tbl">
             <thead><tr><th>日時</th><th>操作した人</th><th>対象</th><th>操作</th></tr></thead>
@@ -83,10 +82,10 @@ function CompanySection({ ctx }: { ctx: Ctx }) {
       <h2 className="h2">会社</h2>
       <div style={{ display: "grid", gridTemplateColumns: "140px minmax(0,1fr)", gap: "10px 14px", fontSize: 14 }}>
         <span className="muted">会社名</span><strong>{ctx.company.name}</strong>
-        <span className="muted">区分</span><span>{ctx.company.kind === "hrd" ? "HRD総合事務所（管理側・会計事務所）" : ctx.company.kind === "accounting_firm" ? "会計事務所" : "企業"}</span>
+        <span className="muted">区分</span><span>{ctx.company.kind === "client" ? "企業" : "会計事務所"}</span>
         <span className="muted">期首月</span><span><FiscalStart ctx={ctx} /></span>
-        <span className="muted">MFプラン</span><span>{ctx.company.mf_plan ?? "—"}（クラウドBoxの保存上限はプランにより1,000件）</span>
-        <span className="muted">あなたの権限</span><span>{ctx.isHrd ? "HRD管理者（全社）" : ROLE_LABEL[ctx.role]}</span>
+        <span className="muted">MFプラン</span><span>{ctx.company.mf_plan ?? "—"}</span>
+        <span className="muted">あなたの権限</span><span>{ctx.isHrd ? "マスター管理者" : ROLE_LABEL[ctx.role]}</span>
       </div>
       {ctx.isOwner && ctx.payments.length === 0 && (
         <div className="row wrap" style={{ gap: 10 }}>
@@ -104,38 +103,13 @@ function FiscalStart({ ctx }: { ctx: Ctx }) {
     const { error } = await sb().from("companies").update({ fiscal_start_month: m }).eq("id", ctx.company.id);
     if (error) ctx.toast(error.message, true); else { ctx.toast(`期首月を${m}月にしました`); ctx.reloadOrg(); }
   }
-  if (!ctx.isOwner) return <>{v}月（予算の年度の区切り）</>;
+  if (!ctx.isOwner) return <>{v}月</>;
   return (
     <span className="row" style={{ gap: 8 }}>
       <select className="inp" style={{ width: 100, height: 34 }} value={v} onChange={(e) => change(Number(e.target.value))} aria-label="期首月">
         {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}月</option>)}
       </select>
-      <span className="muted" style={{ fontSize: 12 }}>予算の年度の区切りに使います</span>
     </span>
-  );
-}
-
-function NewClient({ ctx }: { ctx: Ctx }) {
-  const [name, setName] = useState("");
-  const [kana, setKana] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function add(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setBusy(true);
-    const { error } = await sb().rpc("create_company", { p_name: name.trim(), p_kana: toZenginKana(kana) || null, p_plan: "スモールビジネス" });
-    setBusy(false);
-    if (error) ctx.toast(error.message, true); else { ctx.toast("顧問先を追加しました：" + name); setName(""); setKana(""); ctx.reloadOrg(); }
-  }
-  return (
-    <form className="card pad stack" style={{ gap: 12 }} onSubmit={add}>
-      <h2 className="h2">顧問先を追加（HRD管理者のみ）</h2>
-      <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-        <label className="field"><span>会社名</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} required /></label>
-        <label className="field"><span>会社名カナ（FB用）</span><input className="inp" value={kana} onChange={(e) => setKana(e.target.value)} placeholder="ｻﾝﾌﾟﾙ(ｶ" /></label>
-      </div>
-      <button className="btn btn-primary" type="submit" disabled={busy} style={{ alignSelf: "flex-start" }}>追加</button>
-    </form>
   );
 }
 
@@ -278,7 +252,7 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
   return (
     <section className="card pad stack" style={{ gap: 12 }}>
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 8 }}>
-        <h2 className="h2">支払先（振込先口座）</h2>
+        <h2 className="h2">支払先</h2>
         <div className="row" style={{ gap: 8 }}>
           {ctx.canApprove && <button type="button" className="btn btn-sm" onClick={cleanup}>使われていない支払先を整理</button>}
           {ctx.canApprove && <button type="button" className="btn btn-sm" onClick={() => setBulk((v) => !v)} aria-expanded={bulk}>口座をまとめて登録</button>}
@@ -303,7 +277,7 @@ function PayeesSection({ ctx }: { ctx: Ctx }) {
       )}
       {bulk && (
         <div className="stack" style={{ gap: 10, padding: 14, background: "#F7F6F3", borderRadius: 12 }}>
-          <span style={{ fontSize: 13, lineHeight: 1.7 }}>1行に1社、タブ区切りで「支払先名・銀行コード・銀行名カナ・支店コード・支店名カナ・種別（普通/当座）・口座番号・受取人名カナ」を貼り付けます。支払先名が一致する支払先の口座を上書きします（一致しない名前は登録しません）。</span>
+          <span className="muted" style={{ fontSize: 12 }}>形式：支払先名⇥銀行コード⇥銀行名カナ⇥支店コード⇥支店名カナ⇥普通/当座⇥口座番号⇥受取人名カナ</span>
           <label htmlFor="payee-bulk" className="sr">口座の一覧</label>
           <textarea id="payee-bulk" className="inp" style={{ minHeight: 120, fontSize: 12, fontFamily: "ui-monospace, monospace" }} value={bulkText} onChange={(e) => setBulkText(e.target.value)} placeholder={"ストローハット\t1341\tｾｲﾌﾞｼﾝｷﾝ\t001\tﾎﾝﾃﾝ\t普通\t2032451\tｶ)ｽﾄﾛｰﾊﾂﾄ"} />
           <div className="row wrap" style={{ gap: 10 }}>
@@ -355,7 +329,6 @@ function MembersSection({ ctx, members, onChange }: { ctx: Ctx; members: Member[
   return (
     <section className="card pad stack" style={{ gap: 12 }}>
       <h2 className="h2">メンバーと権限</h2>
-      <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>オーナー：全操作・口座登録・メンバー管理 ／ 承認者：承認・FBデータ作成 ／ 担当者：書類登録・支払予定の作成 ／ 閲覧のみ：見るだけ。HRD管理者は全社を管理できます。</p>
       {members.map((m) => (
         <div key={m.user_id} className="list-row" style={{ fontSize: 13 }}>
           <strong style={{ minWidth: 140 }}>{m.name}</strong>
@@ -399,7 +372,7 @@ function MfSection({ ctx }: { ctx: Ctx }) {
     else ctx.toast(r.error ?? "連携を開始できませんでした", true);
   }
   async function disconnect() {
-    if (!confirm("マネーフォワードとの連携を解除しますか？（保存している認証情報は削除され、元に戻せません。再連携は可能です）")) return;
+    if (!confirm("マネーフォワードとの連携を解除しますか？")) return;
     setBusy(true);
     const r = await authedFetch("/api/mf/disconnect", { companyId: ctx.company.id });
     setBusy(false);
@@ -431,8 +404,7 @@ function MfSection({ ctx }: { ctx: Ctx }) {
         <span className="muted">状態</span>
         <span><span className={"chip " + (connected ? "st-ok" : st === "error" ? "st-err" : "st-auto")}>{connected ? "連携中" : st === "error" ? "エラー" : "未連携"}</span>{ctx.mf?.office_name ? `　${ctx.mf.office_name}` : ""}</span>
         {ctx.mf?.last_error && <><span className="muted">エラー</span><span style={{ color: "#9B1C1C" }}>{ctx.mf.last_error}</span></>}
-        <span className="muted">連携する機能</span><span>クラウド会計（支払仕訳の登録・勘定科目の参照）／ クラウドBox（請求書・領収書の読み取りのみ）</span>
-        <span className="muted">安全対策</span><span className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>この会社が契約しているマネーフォワードで本人が承認（OAuth）。認証情報はサーバー側で暗号化保存し、画面からは読めません。連携・解除・仕訳登録はすべて操作ログに残ります。</span>
+        <span className="muted">連携範囲</span><span>クラウド会計・クラウドBox（読み取り）</span>
       </div>
       {ctx.isOwner && (
         <div className="row wrap" style={{ gap: 8 }}>
@@ -447,13 +419,12 @@ function MfSection({ ctx }: { ctx: Ctx }) {
             <strong>勘定科目の対応表</strong>
             <button type="button" className="btn btn-sm" disabled={busy} onClick={loadAccounts}>{accounts ? "再読み込み" : "マネーフォワードの勘定科目を読み込む"}</button>
           </div>
-          <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.7 }}>支払済みにした支払を仕訳にするとき、借方（買掛金・未払金など）と貸方（振込元の預金口座）に使う科目を選びます。</p>
           {accounts && (
             <>
               <div style={{ display: "grid", gridTemplateColumns: "160px minmax(0,1fr)", gap: "8px 14px", alignItems: "center", fontSize: 14 }}>
-                <span className="lbl" style={{ gridColumn: "1 / -1" }}>借方（支払の相手科目）</span>
+                <span className="lbl" style={{ gridColumn: "1 / -1" }}>借方</span>
                 {titles.map((t) => <Fragment key={t}><span>{t}</span><Sel label={`${t}に対応する科目`} value={map.titles?.[t]} onChange={(v) => setMap((m) => ({ ...m, titles: { ...(m.titles ?? {}), [t]: v } }))} /></Fragment>)}
-                <span className="lbl" style={{ gridColumn: "1 / -1", marginTop: 6 }}>貸方（振込元口座）</span>
+                <span className="lbl" style={{ gridColumn: "1 / -1", marginTop: 6 }}>貸方</span>
                 {ctx.banks.map((b) => <Fragment key={b.id}><span>{b.bank_name} {b.branch_name ?? ""}</span><Sel label={`${b.bank_name}に対応する科目`} value={map.banks?.[b.id]} onChange={(v) => setMap((m) => ({ ...m, banks: { ...(m.banks ?? {}), [b.id]: v } }))} /></Fragment>)}
               </div>
               {ctx.isOwner && <button type="button" className="btn btn-primary" style={{ alignSelf: "flex-start" }} onClick={saveMap}>対応表を保存</button>}

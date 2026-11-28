@@ -39,7 +39,7 @@ export default function Fb({ ctx }: { ctx: Ctx }) {
   }
 
   if (ctx.banks.length === 0) {
-    return <div className="card empty">振込元口座が登録されていません。設定 › 振込元口座 から登録してください。</div>;
+    return <div className="card empty">振込元口座を「設定」で登録してください</div>;
   }
 
   return (
@@ -80,12 +80,12 @@ export default function Fb({ ctx }: { ctx: Ctx }) {
           })}
           {fb && fb.issues.filter((i) => !i.paymentId).map((i, k) => <span key={k} className="chip st-err" style={{ height: "auto", padding: "6px 10px" }}>{i.message}</span>)}
           <div className="row" style={{ justifyContent: "space-between", fontWeight: 700 }}><span>FBに含める合計</span><span className="num">{fb?.count ?? 0}件 ／ {yen(fb?.total ?? 0)}</span></div>
-          <span className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>承認済みのみが対象です。カードの引落は自動で除外します。ファイルはShift_JISで作られ、サーバーには残りません（作成記録だけ残ります）。</span>
-          <button type="button" className="btn btn-primary" disabled={busy || !fb || fb.count === 0 || !ctx.canApprove} onClick={download}>FBデータをダウンロード（全銀形式 .txt）</button>
+          <span className="muted" style={{ fontSize: 12 }}>承認済みのみ</span>
+          <button type="button" className="btn btn-primary" disabled={busy || !fb || fb.count === 0 || !ctx.canApprove} onClick={download}>FBデータをダウンロード</button>
         </section>
         <section className="stack" style={{ background: "#17191E", borderRadius: 16, padding: 22, gap: 12, minWidth: 0 }}>
           <div className="row" style={{ justifyContent: "space-between", color: "#FFFFFF" }}>
-            <h2 className="h2">プレビュー（全銀協 総合振込 120桁）</h2>
+            <h2 className="h2">プレビュー</h2>
             <span style={{ fontSize: 12, color: "#A9ACB4" }}>{fb ? fb.lines.length : 0}行</span>
           </div>
           <pre className="fb num">{fb?.lines.join("\n")}</pre>

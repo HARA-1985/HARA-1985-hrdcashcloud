@@ -12,7 +12,7 @@ interface Account {
 interface User { id: string; email: string; display_name: string | null; is_hrd_staff: boolean; created_at: string; last_sign_in_at: string | null; mfa_enabled: boolean; companies: string | null }
 interface Log { id: number; created_at: string; company_name: string | null; actor_email: string | null; action: string; table_name: string }
 
-const SUB: Record<string, string> = { active: "契約中", trialing: "契約中（課金前）", past_due: "支払確認中", canceled: "解約", unpaid: "未払い", incomplete: "手続き中", incomplete_expired: "未完了", paused: "停止中" };
+const SUB: Record<string, string> = { active: "契約中", trialing: "契約中", past_due: "支払確認中", canceled: "解約", unpaid: "未払い", incomplete: "手続き中", incomplete_expired: "未完了", paused: "停止中" };
 const ACTION: Record<string, string> = { insert: "追加", update: "変更", delete: "削除" };
 const TABLE: Record<string, string> = { mf_connections: "マネーフォワード連携", payments: "支払予定", documents: "書類", bank_accounts: "振込元口座", payees: "支払先", fb_exports: "FBデータ", memberships: "メンバー", companies: "会社", firm_clients: "顧問関係", subscriptions: "サブスク", invitations: "招待", profiles: "管理者権限" };
 type Tab = "accounts" | "users" | "logs";
@@ -24,9 +24,9 @@ export default function Admin({ ctx }: { ctx: Ctx }) {
   const [tab, setTab] = useState<Tab>("accounts");
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <div className="row wrap" role="tablist" style={{ gap: 8 }}>
+      <div className="seg" role="tablist" style={{ alignSelf: "flex-start" }}>
         {([["accounts", "アカウント"], ["users", "ユーザー"], ["logs", "操作ログ"]] as [Tab, string][]).map(([k, l]) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} className={"pill" + (tab === k ? " is-on" : "")} onClick={() => setTab(k)}>{l}</button>
+          <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
       {tab === "accounts" && <Accounts ctx={ctx} />}
@@ -59,22 +59,22 @@ function Accounts({ ctx }: { ctx: Ctx }) {
     if (error) ctx.toast(error.message, true); else { ctx.toast(ok); load(); ctx.reloadOrg(); }
   }
   function extend(r: Account) {
-    const v = window.prompt(`「${r.name}」の無料期間を何日延長しますか？`, "30");
+    const v = window.prompt(`${r.name} の無料期間を延長（日数）`, "30");
     if (!v) return;
     const days = Number(v);
     if (!Number.isInteger(days) || days < 1 || days > 365) { ctx.toast("1〜365の日数を入力してください", true); return; }
     call("admin_extend_trial", { p_company: r.id, p_days: days }, `${days}日延長しました`);
   }
   function suspend(r: Account) {
-    if (r.suspended_at) { if (window.confirm(`「${r.name}」の利用停止を解除しますか？`)) call("admin_set_suspended", { p_company: r.id, p_suspended: false }, "利用停止を解除しました"); return; }
-    const reason = window.prompt(`「${r.name}」を利用停止にします。メンバー全員（会計事務所経由を含む）がデータを使えなくなります。\n理由を入力してください（記録用）`, "");
+    if (r.suspended_at) { if (window.confirm(`${r.name} を再開しますか？`)) call("admin_set_suspended", { p_company: r.id, p_suspended: false }, "再開しました"); return; }
+    const reason = window.prompt(`${r.name} を停止します。理由（任意）`, "");
     if (reason === null) return;
-    call("admin_set_suspended", { p_company: r.id, p_suspended: true, p_reason: reason }, "利用停止にしました");
+    call("admin_set_suspended", { p_company: r.id, p_suspended: true, p_reason: reason }, "停止しました");
   }
   function exempt(r: Account) {
     const next = !r.billing_exempt;
-    if (!window.confirm(next ? `「${r.name}」を無料扱い（課金なしで利用可）にしますか？` : `「${r.name}」の無料扱いを解除しますか？`)) return;
-    call("admin_set_billing_exempt", { p_company: r.id, p_exempt: next }, next ? "無料扱いにしました" : "無料扱いを解除しました");
+    if (!window.confirm(next ? `${r.name} を無料扱いにしますか？` : `${r.name} を有料に戻しますか？`)) return;
+    call("admin_set_billing_exempt", { p_company: r.id, p_exempt: next }, "変更しました");
   }
 
   return (
@@ -88,19 +88,19 @@ function Accounts({ ctx }: { ctx: Ctx }) {
       </div>
       <div className="row wrap" style={{ gap: 8 }}>
         {([["all", "すべて"], ["accounting_firm", "会計事務所"], ["client", "企業"], ["expired", "期限切れ"], ["suspended", "利用停止"]] as [Filter, string][]).map(([k, label]) => (
-          <button key={k} type="button" className={"pill" + (filter === k ? " is-on" : "")} onClick={() => setFilter(k)}>{label}（{count(k)}）</button>
+          <button key={k} type="button" className={"pill" + (filter === k ? " is-on" : "")} onClick={() => setFilter(k)}>{label} <span className="num" style={{ opacity: .6 }}>{count(k)}</span></button>
         ))}
       </div>
       <section className="card scroll-x">
-        {loading ? <div className="empty">読み込み中…</div> : shown.length === 0 ? <div className="empty">該当するアカウントはありません</div> : (
+        {loading ? <div className="empty">読み込み中…</div> : shown.length === 0 ? <div className="empty">該当なし</div> : (
           <table className="tbl">
-            <thead><tr><th>種別</th><th>名称</th><th>顧問の事務所</th><th>登録日</th><th>無料期間の終了</th><th className="r">メンバー</th><th className="r">顧問先</th><th>契約</th><th>利用</th><th className="r">操作</th></tr></thead>
+            <thead><tr><th>種別</th><th>名称</th><th>会計事務所</th><th>登録日</th><th>無料期間</th><th className="r">人数</th><th className="r">顧問先</th><th>契約</th><th>状態</th><th /></tr></thead>
             <tbody>{shown.map((r) => {
               const covered = !!r.firm_names;
               return (
                 <tr key={r.id}>
                   <td className="nw"><span className={"chip " + (r.kind === "client" ? "chip-spot" : r.kind === "hrd" ? "st-auto" : "chip-fixed")}>{r.kind === "hrd" ? "HRD" : KIND_LABEL[r.kind]}</span></td>
-                  <td><strong>{r.name}</strong>{r.suspended_reason && <div className="muted" style={{ fontSize: 11 }}>停止理由：{r.suspended_reason}</div>}</td>
+                  <td><strong>{r.name}</strong>{r.suspended_reason && <div className="muted" style={{ fontSize: 11 }}>{r.suspended_reason}</div>}</td>
                   <td>{r.firm_names ?? "—"}</td>
                   <td className="num nw">{d(r.created_at)}</td>
                   <td className="num nw">{r.kind === "hrd" || covered || r.billing_exempt ? "—" : d(r.trial_ends_at)}</td>
@@ -114,8 +114,8 @@ function Accounts({ ctx }: { ctx: Ctx }) {
                       {r.kind !== "hrd" && (
                         <>
                           {!covered && !r.billing_exempt && <button type="button" className="btn btn-sm" onClick={() => extend(r)}>延長</button>}
-                          <button type="button" className="btn btn-sm" onClick={() => exempt(r)}>{r.billing_exempt ? "無料扱いを解除" : "無料扱い"}</button>
-                          <button type="button" className="btn btn-sm" style={{ color: r.suspended_at ? undefined : "#9B1C1C" }} onClick={() => suspend(r)}>{r.suspended_at ? "停止を解除" : "利用停止"}</button>
+                          <button type="button" className="btn btn-sm" onClick={() => exempt(r)}>{r.billing_exempt ? "有料に戻す" : "無料扱い"}</button>
+                          <button type="button" className="btn btn-sm" style={{ color: r.suspended_at ? undefined : "#9B1C1C" }} onClick={() => suspend(r)}>{r.suspended_at ? "再開" : "停止"}</button>
                         </>
                       )}
                     </div>
@@ -141,7 +141,7 @@ function Users({ ctx }: { ctx: Ctx }) {
 
   async function toggle(u: User) {
     const next = !u.is_hrd_staff;
-    if (!window.confirm(next ? `${u.email} をHRD管理者にします。全アカウント・全データを閲覧・操作できるようになります。よろしいですか？` : `${u.email} のHRD管理者権限を外しますか？`)) return;
+    if (!window.confirm(next ? `${u.email} を管理者にしますか？全社のデータを操作できます` : `${u.email} の管理者権限を解除しますか？`)) return;
     const { error } = await sb().rpc("admin_set_hrd_staff", { p_user: u.id, p_value: next });
     if (error) ctx.toast(error.message, true); else { ctx.toast("変更しました"); load(); }
   }
@@ -149,12 +149,12 @@ function Users({ ctx }: { ctx: Ctx }) {
   return (
     <section className="card scroll-x">
       <div className="row" style={{ padding: "18px 22px 8px", gap: 10 }}>
-        <h2 className="h2 grow">ユーザー一覧</h2>
-        <span className="muted num" style={{ fontSize: 13 }}>{rows.length}人 ／ 2段階認証 {rows.filter((r) => r.mfa_enabled).length}人</span>
+        <h2 className="h2 grow">ユーザー</h2>
+        <span className="muted num" style={{ fontSize: 13 }}>{rows.length}</span>
       </div>
-      {shown.length === 0 ? <div className="empty">ユーザーはいません</div> : (
+      {shown.length === 0 ? <div className="empty">該当なし</div> : (
         <table className="tbl">
-          <thead><tr><th>メールアドレス</th><th>所属（役割）</th><th>登録日</th><th>最終ログイン</th><th>2段階認証</th><th>HRD管理者</th><th className="r">操作</th></tr></thead>
+          <thead><tr><th>メールアドレス</th><th>所属</th><th>登録日</th><th>最終ログイン</th><th>2段階認証</th><th>管理者</th><th /></tr></thead>
           <tbody>{shown.map((u) => (
             <tr key={u.id}>
               <td><strong>{u.email}</strong>{u.display_name && <div className="muted" style={{ fontSize: 11 }}>{u.display_name}</div>}</td>
@@ -163,7 +163,7 @@ function Users({ ctx }: { ctx: Ctx }) {
               <td className="num nw">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString("ja-JP") : "—"}</td>
               <td className="nw"><span className={"chip " + (u.mfa_enabled ? "st-ok" : "st-auto")}>{u.mfa_enabled ? "設定済み" : "未設定"}</span></td>
               <td className="nw">{u.is_hrd_staff ? <span className="chip chip-fixed">管理者</span> : "—"}</td>
-              <td className="r nw">{u.id !== ctx.userId && <button type="button" className="btn btn-sm" onClick={() => toggle(u)}>{u.is_hrd_staff ? "管理者を外す" : "管理者にする"}</button>}</td>
+              <td className="r nw">{u.id !== ctx.userId && <button type="button" className="btn btn-sm" onClick={() => toggle(u)}>{u.is_hrd_staff ? "解除" : "管理者にする"}</button>}</td>
             </tr>
           ))}</tbody>
         </table>
@@ -182,8 +182,8 @@ function Logs({ ctx }: { ctx: Ctx }) {
   const shown = rows.filter((r) => !ctx.q || (r.company_name ?? "").includes(ctx.q) || (r.actor_email ?? "").includes(ctx.q));
   return (
     <section className="card scroll-x">
-      <div style={{ padding: "18px 22px 8px" }}><h2 className="h2">操作ログ（全アカウント・最新300件）</h2></div>
-      {shown.length === 0 ? <div className="empty">記録はありません</div> : (
+      <div style={{ padding: "18px 22px 8px" }}><h2 className="h2">操作ログ</h2></div>
+      {shown.length === 0 ? <div className="empty">記録なし</div> : (
         <table className="tbl">
           <thead><tr><th>日時</th><th>会社</th><th>操作した人</th><th>対象</th><th>操作</th></tr></thead>
           <tbody>{shown.map((l) => (

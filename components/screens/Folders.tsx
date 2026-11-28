@@ -21,7 +21,7 @@ export default function Folders({ ctx }: { ctx: Ctx }) {
   const files = inMonth.filter((d) => (d.account_title ?? "未設定") === a);
   const amountOf = (docId: string) => sum(ctx.payments.filter((p) => p.document_id === docId), (p) => p.amount);
 
-  if (ctx.docs.length === 0) return <div className="card empty">まだ書類がありません。請求書・立替経費のページから登録すると、支払月×勘定科目のフォルダに自動で仕分けられます。</div>;
+  if (ctx.docs.length === 0) return <div className="card empty">まだ書類がありません</div>;
 
   return (
     <div className="stack" style={{ gap: 16 }}>
@@ -31,8 +31,6 @@ export default function Folders({ ctx }: { ctx: Ctx }) {
             {x === UNSORTED ? UNSORTED : ymLabel(parseDate(x))}
           </button>
         ))}
-        <span className="grow" />
-        <span className="muted" style={{ fontSize: 13 }}>自動仕分け：支払月 × 勘定科目 ／ 原本はマネーフォワード クラウドBoxへ保存</span>
       </div>
       <div className="grid-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
         {accs.map((x) => {
