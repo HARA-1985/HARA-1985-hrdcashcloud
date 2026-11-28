@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { Ctx } from "../ctx";
 import { sb } from "@/lib/supabase";
 import { toZenginKana } from "@/lib/zengin";
+import { MfaSettings } from "../Mfa";
 import { ACCOUNT_TITLES, ROLE_LABEL, type AuditLog, type MfAccountMap, type Membership, type Payee, type Role } from "@/lib/types";
 
 type Member = Membership & { name: string; email: string };
@@ -46,6 +47,7 @@ export default function Settings({ ctx }: { ctx: Ctx }) {
       <PayeesSection ctx={ctx} />
       <MembersSection ctx={ctx} members={members} onChange={loadSide} />
       <MfSection ctx={ctx} />
+      <MfaSettings toast={ctx.toast} required={!!ctx.me?.is_hrd_staff} />
       <section className="card scroll-x">
         <div style={{ padding: "18px 22px 8px" }}><h2 className="h2">操作ログ（最新30件）</h2></div>
         {logs.length === 0 ? <div className="empty">まだ操作の記録はありません</div> : (

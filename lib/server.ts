@@ -22,9 +22,19 @@ export async function authorize(req: Request, companyId: string | undefined) {
     // 直接の所属 または 会計事務所経由の所属の役割と、無料期間・サブスクで今使えるか
     admin.rpc("svc_company_role", { p_company: companyId, p_user: u.user.id }).maybeSingle<{ role: string; usable: boolean }>(),
   ]);
-  if (prof?.is_hrd_staff) return { admin, user: u.user, role: "owner" as string | undefined, isHrd: true };
+  if (prof?.is_hrd_staff && hrdSessionOk(token, u.user)) return { admin, user: u.user, role: "owner" as string | undefined, isHrd: true };
   if (acc && !acc.usable) return { error: "無料期間が終了しています。プランのお申し込み後にご利用いただけます", status: 402 as const };
   return { admin, user: u.user, role: acc?.role as string | undefined, isHrd: false };
+}
+
+/** 2段階認証を設定している HRD 管理者は、2段階認証済み（aal2）のセッションでのみ管理者として扱う（DB の private.is_hrd_staff と同じ判定） */
+function hrdSessionOk(token: string, user: { factors?: { status: string }[] | null }): boolean {
+  const hasMfa = (user.factors ?? []).some((f) => f.status === "verified");
+  if (!hasMfa) return true;
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")) as { aal?: string };
+    return payload.aal === "aal2";
+  } catch { return false; }
 }
 
 export const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -57,6 +67,7 @@ export async function authorizeOwner(req: Request, companyId: string | undefined
     admin.from("profiles").select("is_hrd_staff").eq("id", u.user.id).single(),
     admin.from("memberships").select("role").eq("company_id", companyId).eq("user_id", u.user.id).maybeSingle(),
   ]);
-  if (!prof?.is_hrd_staff && mem?.role !== "owner") return { error: "お申し込み・お支払いの手続きはオーナーのみできます", status: 403 as const };
+  const hrd = !!prof?.is_hrd_staff && hrdSessionOk(token, u.user);
+  if (!hrd && mem?.role !== "owner") return { error: "お申し込み・お支払いの手続きはオーナーのみできます", status: 403 as const };
   return { admin, user: u.user };
 }
