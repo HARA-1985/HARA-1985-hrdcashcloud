@@ -36,3 +36,27 @@ HRD総合事務所が構築・管理し、顧問先もログインして使え�
 - マネーフォワード連携（OAuth・カード明細取得・クラウドBox保存・仕訳登録）
 - AI-OCRによる請求書の自動読み取り
 - 2段階認証の必須化、公開サインアップの停止（招待制）
+
+## 3階層と30日無料・サブスク
+
+| 階層 | 実体 | できること |
+|---|---|---|
+| ① HRD総合事務所（システム管理者） | `profiles.is_hrd_staff`、HRD自身は `companies.kind = 'hrd'` | 全アカウントの閲覧（「HRD管理」画面）、無料期間の延長、HRDの顧問先の登録 |
+| ② 会計事務所 | `companies.kind = 'accounting_firm'` | 顧問先の登録・一覧、事務所コードの発行。事務所のメンバーは顧問先でも事務所での役割と同じ権限 |
+| ③ 企業 | `companies.kind = 'client'` | 自社データの利用、自社のマネーフォワード連携、事務所コードで顧問の会計事務所とつながる |
+
+- 新規登録：ログイン画面の「新規登録（1か月無料）」→ メールのリンク → 「企業／会計事務所」を選んで登録（`register_account`）。LP からは `/?signup=1` で新規登録タブが開く
+- 登録から30日は無料。期限後はプラン申し込み（Stripe）で継続。会計事務所の契約があれば、つながっている顧問先も利用可。HRDの顧問先は常に利用可
+- 期限切れでも「プラン・お支払い」「顧問先」画面は開ける。業務データは消えない
+- 権限判定は `private.has_role`（会計事務所経由の所属・課金状態を含む）。サーバーAPIは `svc_company_role` で同じ判定をする
+- 料金は `plans` テーブル（仮：企業 月980円／会計事務所 月2,980円＋顧問先1社 月300円）。Stripe の Price ID を `stripe_price_id` / `stripe_client_price_id` に登録する
+
+### Stripe の設定
+1. https://dashboard.stripe.com/products で月額・定額・JPY の価格を作る（企業プラン／会計事務所プラン 基本料／会計事務所プラン 顧問先1社あたり）
+2. `plans` に Price ID を登録（SQL Editor で `update public.plans set stripe_price_id = 'price_…' where code = 'client_monthly';` など）
+3. https://dashboard.stripe.com/webhooks で `https://studio.cpa-hara.com/api/billing/webhook` を登録（`checkout.session.completed`、`customer.subscription.*`、`invoice.paid`、`invoice.payment_failed`）
+4. Vercel に `STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET` を Sensitive で登録
+5. https://dashboard.stripe.com/settings/billing/portal でカスタマーポータルを有効化
+
+### DB のテスト（ローカル Postgres 16）
+`supabase/tests/00_local_stubs.sql` → `supabase/migrations/*.sql` → `supabase/tests/10_access_test.sql` の順に流す（39項目）。

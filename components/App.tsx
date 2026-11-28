@@ -2,10 +2,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { sb, supabaseConfigured } from "@/lib/supabase";
-import type { BankAccount, CardTx, Company, Doc, Membership, MfConnection, Payee, Payment, Profile, Role } from "@/lib/types";
+import { KIND_LABEL, type AccessStatus, type BankAccount, type CardTx, type Company, type Doc, type FirmClient, type Membership, type MfConnection, type Payee, type Payment, type Profile, type Role } from "@/lib/types";
 import { todayLabel } from "@/lib/format";
 import Icon from "./Icon";
 import Login from "./Login";
+import Onboarding from "./Onboarding";
 import type { Ctx, Screen } from "./ctx";
 import Dashboard from "./screens/Dashboard";
 import Monthly from "./screens/Monthly";
@@ -15,15 +16,22 @@ import Cards from "./screens/Cards";
 import Fb from "./screens/Fb";
 import Folders from "./screens/Folders";
 import Settings from "./screens/Settings";
+import Clients from "./screens/Clients";
+import Billing, { daysLeft } from "./screens/Billing";
+import Admin from "./screens/Admin";
 import DocViewer from "./DocViewer";
 
 const NAV: [Screen, string][] = [
   ["dashboard", "ダッシュボード"], ["monthly", "月別推移"], ["schedule", "支払予定"], ["invoice", "請求書"],
   ["expense", "立替経費"], ["card", "クレジットカード"], ["fb", "FBデータ"], ["folders", "書類フォルダ"], ["settings", "設定"],
 ];
+/** 期限切れでも開ける画面 */
+const ALWAYS_OPEN: Screen[] = ["billing", "clients", "admin"];
+const ROLE_ORDER: Role[] = ["owner", "approver", "member", "viewer"];
 const TITLES: Record<Screen, string> = {
   dashboard: "資金繰りダッシュボード", monthly: "月別推移", schedule: "支払予定", invoice: "請求書を登録", expense: "立替経費を登録",
   card: "クレジットカード（マネーフォワード連携）", fb: "FBデータ作成", folders: "書類フォルダ", settings: "設定",
+  clients: "顧問先", billing: "プラン・お支払い", admin: "HRD管理（全アカウント）",
 };
 
 const store = {
@@ -36,6 +44,9 @@ export default function App() {
   const [me, setMe] = useState<Profile | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [members, setMembers] = useState<Membership[]>([]);
+  const [firmClients, setFirmClients] = useState<FirmClient[]>([]);
+  const [orgLoaded, setOrgLoaded] = useState(false);
+  const [access, setAccess] = useState<AccessStatus | null>(null);
   const [cid, setCid] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -68,6 +79,17 @@ export default function App() {
     window.history.replaceState(null, "", u.pathname + u.search);
   }, [toast]);
 
+  /* --- Stripe の申し込み画面から戻ってきたとき --- */
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    const r = u.searchParams.get("billing");
+    if (!r) return;
+    if (r === "success") toast("お申し込みありがとうございます。反映まで数秒かかることがあります");
+    setScreen("billing");
+    u.searchParams.delete("billing");
+    window.history.replaceState(null, "", u.pathname + u.search);
+  }, [toast]);
+
   /* --- auth --- */
   useEffect(() => {
     if (!supabaseConfigured()) { setSession(null); return; }
@@ -80,17 +102,26 @@ export default function App() {
   const loadOrg = useCallback(async () => {
     if (!session) return;
     await sb().rpc("bootstrap");
-    const [p, c, m] = await Promise.all([
+    const [p, c, m, f] = await Promise.all([
       sb().from("profiles").select("id,display_name,email,is_hrd_staff").eq("id", session.user.id).single(),
-      sb().from("companies").select("id,name,name_kana,kind,mf_plan,mf_account_map").order("kind", { ascending: true }).order("name"),
+      sb().from("companies").select("id,name,name_kana,kind,mf_plan,mf_account_map,trial_ends_at,firm_code,managed_by_firm_id").order("kind", { ascending: true }).order("name"),
       sb().from("memberships").select("company_id,user_id,role").eq("user_id", session.user.id),
+      sb().from("firm_clients").select("firm_id,company_id,status,created_at"),
     ]);
-    setMe((p.data as Profile) ?? null);
-    const list = (c.data as Company[]) ?? [];
-    setCompanies(list);
-    setMembers((m.data as Membership[]) ?? []);
+    const prof = (p.data as Profile) ?? null;
+    setMe(prof);
+    const all = (c.data as Company[]) ?? [];
+    const mem = (m.data as Membership[]) ?? [];
+    const links = (f.data as FirmClient[]) ?? [];
+    setCompanies(all);
+    setMembers(mem);
+    setFirmClients(links);
+    setOrgLoaded(true);
+    // 切り替えメニューに出すのは、自分が役割を持つ会社（直接の所属 or 会計事務所経由）
+    const mine = new Set(mem.map((x) => x.company_id));
+    const usable = prof?.is_hrd_staff ? all : all.filter((x) => mine.has(x.id) || links.some((l) => l.status === "active" && l.company_id === x.id && mine.has(l.firm_id)));
     const saved = store.get("hrd.cid");
-    setCid((cur) => (cur && list.some((x) => x.id === cur) ? cur : saved && list.some((x) => x.id === saved) ? saved : list[0]?.id ?? null));
+    setCid((cur) => (cur && usable.some((x) => x.id === cur) ? cur : saved && usable.some((x) => x.id === saved) ? saved : usable[0]?.id ?? null));
   }, [session]);
   useEffect(() => { loadOrg(); }, [loadOrg]);
 
@@ -119,24 +150,63 @@ export default function App() {
   }, [cid, toast]);
   useEffect(() => { if (cid) { store.set("hrd.cid", cid); reload(); } }, [cid, reload]);
 
-  const company = companies.find((x) => x.id === cid) ?? null;
-  const role: Role | null = me?.is_hrd_staff ? "owner" : (members.find((m) => m.company_id === cid)?.role ?? null);
+  /* --- 無料期間・サブスクの状態 --- */
+  const loadAccess = useCallback(async () => {
+    if (!cid) { setAccess(null); return; }
+    const { data } = await sb().rpc("access_status", { p_company: cid });
+    setAccess((data as AccessStatus) ?? null);
+  }, [cid]);
+  useEffect(() => { loadAccess(); }, [loadAccess, companies]);
+
+  const isHrd = !!me?.is_hrd_staff;
+  const mySet = useMemo(() => new Set(members.map((m) => m.company_id)), [members]);
+  const switchable = useMemo(() => isHrd ? companies : companies.filter((x) => mySet.has(x.id)
+    || firmClients.some((l) => l.status === "active" && l.company_id === x.id && mySet.has(l.firm_id))), [isHrd, companies, mySet, firmClients]);
+  const company = switchable.find((x) => x.id === cid) ?? null;
+  // 役割：HRD管理者は全社オーナー／直接の所属／会計事務所経由（事務所での役割を引き継ぐ）
+  const role: Role | null = useMemo(() => {
+    if (isHrd) return "owner";
+    const cand: Role[] = [];
+    const direct = members.find((m) => m.company_id === cid)?.role;
+    if (direct) cand.push(direct);
+    for (const l of firmClients) {
+      if (l.status !== "active" || l.company_id !== cid) continue;
+      const r = members.find((m) => m.company_id === l.firm_id)?.role;
+      if (r) cand.push(r);
+    }
+    return cand.sort((a, b) => ROLE_ORDER.indexOf(a) - ROLE_ORDER.indexOf(b))[0] ?? null;
+  }, [isHrd, members, firmClients, cid]);
+  const expired = !isHrd && access === "expired";
+  const selectCompany = useCallback((id: string) => { setCid(id); setScreen("dashboard"); }, []);
 
   const ctx: Ctx | null = useMemo(() => {
     if (!session || !company || !role) return null;
     return {
-      userId: session.user.id, me, company, role, isHrd: !!me?.is_hrd_staff,
+      userId: session.user.id, me, company, role, isHrd, companies, firmClients, access, selectCompany,
       canWrite: role !== "viewer", canApprove: role === "owner" || role === "approver", isOwner: role === "owner",
       payments, banks, payees, docs, cards, mf, loading, q,
       reload, reloadOrg: loadOrg, toast, go: setScreen, openDoc: setDocId, setPayments,
     };
-  }, [session, company, role, me, payments, banks, payees, docs, cards, mf, loading, q, reload, loadOrg, toast]);
+  }, [session, company, role, me, isHrd, companies, firmClients, access, selectCompany, payments, banks, payees, docs, cards, mf, loading, q, reload, loadOrg, toast]);
+
+  // 期限切れのときは業務画面を開かず、お申し込み画面へ
+  const view: Screen = expired && !ALWAYS_OPEN.includes(screen) ? "billing" : screen;
+  const nav: [Screen, string][] = [
+    ...NAV,
+    ...(company ? [["clients", company.kind === "client" ? "顧問の会計事務所" : "顧問先"] as [Screen, string]] : []),
+    ...(company && company.kind !== "hrd" ? [["billing", "プラン・お支払い"] as [Screen, string]] : []),
+    ...(isHrd ? [["admin", "HRD管理"] as [Screen, string]] : []),
+  ];
+  const title = view === "clients" && company?.kind === "client" ? "顧問の会計事務所" : TITLES[view];
 
   if (!supabaseConfigured()) {
     return <div className="login-wrap"><div className="login"><h1 style={{ fontSize: 20 }}>設定が必要です</h1><p className="muted">環境変数 NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。</p></div></div>;
   }
   if (session === undefined) return <div className="login-wrap" aria-busy="true" />;
   if (!session) return <Login />;
+  if (orgLoaded && !isHrd && switchable.length === 0) {
+    return <Onboarding onDone={async (id) => { await loadOrg(); setCid(id); setScreen("dashboard"); toast("登録しました。30日間無料でお使いいただけます"); }} onSignOut={() => sb().auth.signOut()} />;
+  }
 
   const wait = payments.filter((p) => p.status === "pending").length;
 
@@ -147,27 +217,33 @@ export default function App() {
           <div className="logo">HRD</div>
           <div className="stack" style={{ gap: 2 }}>
             <span style={{ fontSize: 14, fontWeight: 700 }}>HRD資金繰りクラウド</span>
-            <span style={{ fontSize: 11, color: "#A9ACB4" }}>{me?.is_hrd_staff ? "HRD管理者" : role ? "顧問先ユーザー" : ""}</span>
+            <span style={{ fontSize: 11, color: "#A9ACB4" }}>{isHrd ? "HRD管理者" : company ? KIND_LABEL[company.kind] : ""}</span>
           </div>
         </div>
-        {companies.length > 0 && (
+        {switchable.length > 0 && (
           <label className="stack" style={{ gap: 6 }}>
             <span style={{ fontSize: 11, color: "#A9ACB4", padding: "0 4px" }}>会社</span>
             <select className="co-select" value={cid ?? ""} onChange={(e) => { setCid(e.target.value); setScreen("dashboard"); }}>
-              {companies.map((c) => <option key={c.id} value={c.id}>{c.kind === "hrd" ? "★ " : ""}{c.name}</option>)}
+              {switchable.map((c) => <option key={c.id} value={c.id}>{c.kind === "hrd" ? "★ " : c.kind === "accounting_firm" ? "◆ " : ""}{c.name}</option>)}
             </select>
           </label>
         )}
         <div className="stack" style={{ gap: 4 }}>
-          {NAV.map(([k, label]) => (
-            <button key={k} type="button" className={"nav-btn" + (screen === k ? " is-active" : "")} onClick={() => setScreen(k)} disabled={!ctx} aria-current={screen === k ? "page" : undefined}>
+          {nav.map(([k, label]) => (
+            <button key={k} type="button" className={"nav-btn" + (view === k ? " is-active" : "")} onClick={() => setScreen(k)} disabled={!ctx || (expired && !ALWAYS_OPEN.includes(k))} aria-current={view === k ? "page" : undefined}>
               <Icon name={k} />
               <span className="grow">{label}</span>
               {k === "schedule" && wait > 0 && <span className="badge num">{wait}</span>}
             </button>
           ))}
         </div>
-        <div className="side-note">
+        {access === "trial" && company && (
+          <button type="button" className="side-note" onClick={() => setScreen("billing")} style={{ border: 0, textAlign: "left", color: "#FFFFFF" }}>
+            <span style={{ fontSize: 11, color: "#A9ACB4" }}>無料期間</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>あと <span className="num">{daysLeft(company.trial_ends_at)}</span> 日（プランを見る）</span>
+          </button>
+        )}
+        <div className="side-note" style={access === "trial" ? { marginTop: 0 } : undefined}>
           <span style={{ fontSize: 11, color: "#A9ACB4" }}>原本の保管先</span>
           <span style={{ fontSize: 13, fontWeight: 600 }}>マネーフォワード クラウドBox{mf?.status === "connected" ? "（連携中）" : "（未連携）"}</span>
         </div>
@@ -178,14 +254,14 @@ export default function App() {
         <header className="row wrap" style={{ gap: 16 }}>
           <div className="stack" style={{ gap: 4, flex: "1 1 260px" }}>
             <span className="lbl">{todayLabel()}{company ? ` ・ ${company.name}` : ""}</span>
-            <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-.01em" }}>{TITLES[screen]}</h1>
+            <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-.01em" }}>{title}</h1>
           </div>
           <div style={{ position: "relative", flex: "0 1 320px", minWidth: 200 }}>
             <span style={{ position: "absolute", left: 13, top: 13 }}><Icon name="search" color="#5B5F68" /></span>
             <label htmlFor="q" className="sr">相手先・内容で検索</label>
             <input id="q" className="inp srch" type="search" placeholder="相手先・内容で検索" value={q} onChange={(e) => { setQ(e.target.value); if (e.target.value && screen !== "schedule") setScreen("schedule"); }} />
           </div>
-          {ctx?.canWrite && (
+          {ctx?.canWrite && !expired && (
             <button type="button" className="btn btn-primary" onClick={() => setScreen("invoice")}><Icon name="plus" size={16} width={2.2} />書類を登録</button>
           )}
         </header>
@@ -195,14 +271,22 @@ export default function App() {
             まだ利用できる会社がありません。<br />HRD総合事務所から招待を受けると、ここに会社が表示されます。
           </div>
         )}
-        {ctx && screen === "dashboard" && <Dashboard ctx={ctx} />}
-        {ctx && screen === "monthly" && <Monthly ctx={ctx} />}
-        {ctx && screen === "schedule" && <Schedule ctx={ctx} />}
-        {ctx && (screen === "invoice" || screen === "expense") && <Upload key={screen} ctx={ctx} mode={screen} />}
-        {ctx && screen === "card" && <Cards ctx={ctx} />}
-        {ctx && screen === "fb" && <Fb ctx={ctx} />}
-        {ctx && screen === "folders" && <Folders ctx={ctx} />}
-        {ctx && screen === "settings" && <Settings ctx={ctx} />}
+        {ctx && expired && view === "billing" && screen !== "billing" && (
+          <div role="alert" className="card pad" style={{ background: "#FFF8F3", borderColor: "#FBEDE2", color: "#9A420A", fontSize: 14, fontWeight: 600 }}>
+            無料期間が終了したため、この画面は開けません。プランをお申し込みいただくと、すぐに続きからご利用いただけます。
+          </div>
+        )}
+        {ctx && view === "dashboard" && <Dashboard ctx={ctx} />}
+        {ctx && view === "monthly" && <Monthly ctx={ctx} />}
+        {ctx && view === "schedule" && <Schedule ctx={ctx} />}
+        {ctx && (view === "invoice" || view === "expense") && <Upload key={view} ctx={ctx} mode={view} />}
+        {ctx && view === "card" && <Cards ctx={ctx} />}
+        {ctx && view === "fb" && <Fb ctx={ctx} />}
+        {ctx && view === "folders" && <Folders ctx={ctx} />}
+        {ctx && view === "settings" && <Settings ctx={ctx} />}
+        {ctx && view === "clients" && <Clients ctx={ctx} />}
+        {ctx && view === "billing" && <Billing ctx={ctx} />}
+        {ctx && view === "admin" && isHrd && <Admin ctx={ctx} />}
       </main>
 
       {ctx && docId && <DocViewer ctx={ctx} docId={docId} onClose={() => setDocId(null)} />}

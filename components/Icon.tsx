@@ -16,6 +16,9 @@ const PATHS: Record<string, string> = {
   doc: "M7 3h7l5 5v13H7zM14 3v5h5",
   logout: "M15 3h4v18h-4M10 17l-5-5 5-5M5 12h11",
   sync: "M20 11a8 8 0 0 0-14.9-3M4 13a8 8 0 0 0 14.9 3M4 4v4h4M20 20v-4h-4",
+  clients: "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 3.5a4 4 0 0 1 0 7M22 21v-1a6 6 0 0 0-4-5.6",
+  billing: "M3 6h18v12H3zM3 10h18M16 15h2",
+  admin: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4",
 };
 
 export default function Icon({ name, size = 18, color = "currentColor", width = 1.8 }: { name: keyof typeof PATHS | string; size?: number; color?: string; width?: number }) {
